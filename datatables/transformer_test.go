@@ -1,6 +1,7 @@
 package datatables
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -134,6 +135,48 @@ func TestApplyOptions(t *testing.T) {
 		// Check removed column
 		if _, exists := result[0]["password"]; exists {
 			t.Error("password should be removed")
+		}
+	})
+
+	t.Run("Add callback receives DT_RowIndex added in step 1", func(t *testing.T) {
+		data := []map[string]interface{}{
+			{"name": "John"},
+		}
+
+		opts := NewOptions().
+			WithIndex("DT_RowIndex", false).
+			Add("label", func(row map[string]interface{}) interface{} {
+				idx, ok := row["DT_RowIndex"]
+				if !ok {
+					return "missing-index"
+				}
+				return fmt.Sprintf("%s#%d", row["name"].(string), idx.(int))
+			})
+
+		result := applyOptions(data, opts, 5)
+
+		if result[0]["label"] != "John#6" {
+			t.Errorf("Expected label='John#6', got %v", result[0]["label"])
+		}
+	})
+
+	t.Run("Edit callback receives columns added by Add", func(t *testing.T) {
+		data := []map[string]interface{}{
+			{"first_name": "John", "last_name": "Doe"},
+		}
+
+		opts := NewOptions().
+			Add("full_name", func(row map[string]interface{}) interface{} {
+				return row["first_name"].(string) + " " + row["last_name"].(string)
+			}).
+			Edit("full_name", func(value interface{}, row map[string]interface{}) interface{} {
+				return strings.ToUpper(value.(string))
+			})
+
+		result := applyOptions(data, opts, 0)
+
+		if result[0]["full_name"] != "JOHN DOE" {
+			t.Errorf("Expected full_name='JOHN DOE', got %v", result[0]["full_name"])
 		}
 	})
 

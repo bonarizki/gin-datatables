@@ -1,261 +1,158 @@
-# 🚀 Release Notes - Major Refactoring & Security Update
+# Release Notes — v2.0.0
 
-## ✅ Ready to Publish!
+## Summary
+
+This release fixes a cross-tenant data leak in global search, restores
+spec-compliant DataTables ordering, bounds pagination, and fixes the
+response/converter output contract. It is a breaking change — see
+[MIGRATING.md](MIGRATING.md) for the upgrade path and
+[CHANGELOG.md](CHANGELOG.md) for the full list of changes.
+
+### Highlights
+
+- 🔴 **Security fix**: global search could bypass a caller's own `WHERE`
+  clause (e.g. tenant isolation) because the OR chain across searchable
+  columns wasn't grouped. Fixed, with a regression test.
+- 🔴 **Security fix**: `length=0`/invalid/`-1` disabled `LIMIT` entirely,
+  letting a client dump an entire table with one query parameter. `length`
+  is now always bounded.
+- 🔴 **Correctness fix**: `order[0][column]` was read as a column name
+  instead of the numeric index the DataTables spec sends, so a stock
+  client's sort was silently dropped.
+- 🔴 **Correctness fix**: with no valid order, queries ran with no `ORDER
+  BY` while `LIMIT`/`OFFSET` was still applied — paging could duplicate or
+  skip rows. A primary-key tie-breaker is now always appended.
+- 🔴 **Output fix**: embedded struct fields (e.g. `gorm.Model`) were dropped
+  or nested instead of flattened, and `datatables.JSON()` wrapped the
+  DataTables payload in an envelope the stock client can't read. Both are
+  fixed.
+- ✅ Test coverage for `datatables/parser.go` and `datatables/processor.go`
+  went from 0% to fully covered by new SQL-level tests; package coverage
+  is 92.8% (measured via `go test ./datatables/... -cover`).
 
 ---
 
-## 📋 Summary
+## Is this backward compatible?
 
-This release brings **major improvements** while maintaining **100% backward compatibility**. Your existing code will continue to work without any changes!
+**No.** This is a breaking release; the module path changes to
+`github.com/bonarizki-dat/Datatables-Gin/v2` and several APIs changed shape
+because the old shape *was* the bug. See [MIGRATING.md](MIGRATING.md) for a
+step-by-step guide — most call sites need a handful of mechanical changes
+(import path, `WithDefaultOrder` argument split, response body shape on the
+frontend side).
 
-### Key Highlights:
-
-✅ **Security hardening** - SQL injection prevention
-✅ **Better code organization** - 9 modular files instead of 1
-✅ **Comprehensive testing** - 57.4% coverage with 4 test suites
-✅ **Improved documentation** - Professional README with examples
-✅ **New optional features** - Configurable default ordering
-✅ **All comments in English** - Better for international community
-
----
-
-## 🎯 For Existing Users
-
-### ❓ Do I Need to Change My Code?
-
-**NO!** ❌ Zero changes required. Your code will work as-is.
-
-### 📝 Example - This Still Works:
+### Example: what changes for a typical caller
 
 ```go
-var users []User
+// v1
+import "github.com/bonarizki-dat/Datatables-Gin/datatables"
 
-searchable := []string{"name", "email"}
-orderable := map[string]string{"name": "name", "email": "email"}
-opts := datatables.NewOptions()
-
+opts := datatables.NewOptions().WithDefaultOrder("created_at DESC")
 result, err := datatables.OfReturn(c, db.Model(&User{}), &users, searchable, orderable, opts)
-
 if err != nil {
     c.JSON(500, gin.H{"error": err.Error()})
     return
 }
-
 datatables.JSON(c, result)
 ```
 
-**Status:** ✅ **WORKS PERFECTLY**
-
----
-
-## 📦 What to Publish
-
-### ✅ Files to Include in Repository:
-
-```
-✅ README.md                      - Main documentation
-✅ CHANGELOG.md                   - Version history
-✅ BACKWARD_COMPATIBILITY.md      - Migration guide
-✅ go.mod                         - Dependencies
-✅ go.sum                         - Dependency checksums
-✅ datatables/*.go                - Source code
-✅ datatables/*_test.go           - Unit tests (KEEP THESE!)
-✅ datatables/dto/*.go            - DTOs
-✅ examples/*.go                  - Usage examples
-```
-
-### ❌ Files to Exclude (.gitignore):
-
-```
-❌ .DS_Store
-❌ *.swp
-❌ *.swo
-❌ .idea/
-❌ .vscode/
-❌ vendor/ (optional)
-```
-
----
-
-## 🧪 Test Files - Important!
-
-### ⚠️ DO NOT REMOVE `*_test.go` files!
-
-**Why keep them?**
-
-1. ✅ **Industry standard** - All professional Go packages include tests
-2. ✅ **Build trust** - Shows package is reliable and well-tested
-3. ✅ **No bloat** - Test files are NOT compiled when users `go get` your package
-4. ✅ **Documentation** - Tests show how to use the API
-5. ✅ **CI/CD** - Users can run tests to verify everything works
-
-**Examples from popular packages:**
-- `github.com/gin-gonic/gin` - Has test files ✅
-- `gorm.io/gorm` - Has test files ✅
-- `github.com/go-playground/validator` - Has test files ✅
-
----
-
-## 📊 File Structure
-
-```
-Datatables-Gin/
-│
-├── README.md                          # Professional documentation
-├── CHANGELOG.md                       # Version history
-├── BACKWARD_COMPATIBILITY.md          # Migration guide
-├── go.mod                             # Dependencies
-├── go.sum                             # Checksums
-│
-├── datatables/
-│   ├── datatables.go        (55 lines)   # Package docs
-│   ├── processor.go        (133 lines)   # Core logic
-│   ├── options.go          (111 lines)   # Options builder
-│   ├── parser.go            (67 lines)   # Request parsing
-│   ├── converter.go        (112 lines)   # Struct conversion
-│   ├── transformer.go       (65 lines)   # Transformations
-│   ├── validation.go        (62 lines)   # Security
-│   ├── errors.go            (28 lines)   # Error types
-│   ├── response.go          (42 lines)   # JSON helpers
-│   │
-│   ├── validation_test.go  (118 lines)   # ✅ KEEP!
-│   ├── converter_test.go   (155 lines)   # ✅ KEEP!
-│   ├── options_test.go     (137 lines)   # ✅ KEEP!
-│   ├── transformer_test.go (158 lines)   # ✅ KEEP!
-│   │
-│   └── dto/
-│       ├── request.go                    # Request DTOs
-│       └── response.go                   # Response DTOs
-│
-└── examples/
-    └── basic_usage.go                    # Usage examples
-```
-
-**Total:** 9 source files (all < 300 lines) + 4 test files
-
----
-
-## 🔒 Security Improvements
-
-### Before (Vulnerable):
 ```go
-// Column names directly concatenated - potential SQL injection!
-query.Where("LOWER(" + col + ") LIKE LOWER(?)", search)
-```
+// v2
+import "github.com/bonarizki-dat/Datatables-Gin/v2/datatables"
 
-### After (Secure):
-```go
-// Validates column name first
-if !isValidColumnName(col) {
-    return ErrInvalidColumnName
+opts := datatables.NewOptions().WithDefaultOrder("created_at", "desc")
+result, err := datatables.OfReturn(c, db.Model(&User{}), &users, searchable, orderable, opts)
+if err != nil {
+    log.Printf("OfReturn failed: %v", err) // don't send err.Error() to the client
+    datatables.JSONError(c, http.StatusInternalServerError, "failed to load users")
+    return
 }
-query.Where("LOWER(" + col + ") LIKE LOWER(?)", search)
+datatables.JSON(c, result) // now writes {draw, recordsTotal, recordsFiltered, data} at the root
 ```
-
-**Protection against:**
-- `"id; DROP TABLE users--"`
-- `"name' OR '1'='1"`
-- `"email--"`
-- Any malicious SQL injection attempts
 
 ---
 
-## 📈 Test Coverage
+## Security details
+
+### The search data leak (fixed)
+
+Given a caller-scoped query and a search term matching the second
+searchable column:
+
+```go
+// db.Model(&User{}).Where("tenant_id = ?", "A")
+// searchable: []string{"name", "code"}, search value: "x"
+```
+
+v1 generated:
+
+```sql
+WHERE tenant_id = 'A' AND LOWER(name) LIKE LOWER('%x%') OR LOWER(code) LIKE LOWER('%x%')
+```
+
+`AND` binds tighter than `OR`, so any row matching `code` regardless of
+`tenant_id` was included in the result. v2 generates:
+
+```sql
+WHERE tenant_id = 'A' AND (LOWER(name) LIKE LOWER('%x%') ESCAPE '\' OR LOWER(code) LIKE LOWER('%x%') ESCAPE '\')
+```
+
+Search values are also escaped for `%`, `_`, and `\`, so a search for
+`100%` no longer matches every row.
+
+### Unbounded pagination (fixed)
+
+`length=0`, `length=abc`, and `length=-1` all disabled `LIMIT` in v1, so a
+single query parameter could force a full table dump. In v2, `length` is
+always resolved to a positive value bounded by `Options.DefaultPageSize`
+(10) and `Options.MaxPageSize` (500), unless the server explicitly opts
+into `-1` meaning "all rows" via `Options.WithUnlimitedPageSize(true)`.
+
+---
+
+## Test coverage
 
 ```bash
 $ go test ./datatables/... -cover
-
 PASS
-coverage: 57.4% of statements
+coverage: 92.8% of statements
 ```
 
-**Test Suites:**
-- ✅ Validation tests (11 test cases)
-- ✅ Converter tests (7 test cases)
-- ✅ Options tests (7 test cases)
-- ✅ Transformer tests (8 test cases)
-
-**Total: 33+ test cases**
+New in this release: `parser_test.go` (table-driven `ParseParams` tests) and
+`processor_test.go` (SQL assertions via `gorm.Config{DryRun: true}` for
+search grouping, LIKE escaping, ordering, the tie-breaker, `StrictOrder`,
+and an end-to-end `OfReturn` smoke test) — the two files that previously had
+no tests at all, and where every fix in this release lives.
 
 ---
 
-## 🚀 Publishing Checklist
-
-### Before Publishing:
-
-- [x] All tests passing ✅
-- [x] Code builds successfully ✅
-- [x] Documentation complete ✅
-- [x] Backward compatible ✅
-- [x] Security validated ✅
-- [x] Comments in English ✅
-- [x] Files < 300 lines ✅
-
-### To Publish:
+## Upgrading
 
 ```bash
-# 1. Commit all changes
-git add .
-git commit -m "refactor: modular architecture with security improvements
-
-- Split monolithic file into 9 modular files
-- Add SQL injection prevention
-- Add comprehensive unit tests (57.4% coverage)
-- Add configurable default ordering
-- Improve error handling
-- Update documentation
-
-BREAKING CHANGES: None - 100% backward compatible"
-
-# 2. Create a tag
-git tag -a v1.1.0 -m "Version 1.1.0 - Security & Refactoring Update"
-
-# 3. Push to GitHub
-git push origin main
-git push origin v1.1.0
-
-# 4. Create GitHub Release
-# Go to GitHub → Releases → Create new release
-# Copy content from CHANGELOG.md
+go get -u github.com/bonarizki-dat/Datatables-Gin/v2
 ```
 
----
+Then update import paths and follow [MIGRATING.md](MIGRATING.md).
 
-## 📞 Support Users
+### FAQ
 
-### Common Questions:
+**Do I need to change my code?**
+Yes — at minimum the import path and any `WithDefaultOrder` calls. See
+[MIGRATING.md](MIGRATING.md) for the full checklist.
 
-**Q: Do I need to update my code?**
-A: No! 100% backward compatible.
+**Will this change my API's response body?**
+Yes, if you use `datatables.JSON()`/`JSONError()`: the response shape now
+matches what a stock DataTables client expects at the root, instead of
+being wrapped in a `{success, message, data}` envelope. If your frontend
+had a workaround for the old shape, remove it.
 
-**Q: Will this break my existing app?**
-A: No! All APIs remain the same.
+**Will this change query behavior even if I don't touch my code?**
+Only where v1's behavior was the bug: an endpoint that relied on
+`length=-1`/`length=0` returning all rows now needs
+`WithUnlimitedPageSize(true)`; an endpoint whose `WithDefaultOrder` string
+argument doesn't split cleanly into `(column, direction)` needs updating.
 
-**Q: Should I remove test files?**
-A: No! Keep them - it's Go best practice.
-
-**Q: What about the new features?**
-A: They're optional. Use them if you need them.
-
-**Q: I get "invalid column name" error**
-A: Good! The security validation caught a potential issue. Check your column names.
-
----
-
-## 🎉 Ready to Publish!
-
-Everything is ready. Users can update safely with:
-
-```bash
-go get -u github.com/bonarizki-dat/Datatables-Gin
-```
-
-Their existing code will continue working! 🚀
-
----
-
-**Questions?** Check:
-- [README.md](README.md) - Full documentation
-- [BACKWARD_COMPATIBILITY.md](BACKWARD_COMPATIBILITY.md) - Migration guide
-- [CHANGELOG.md](CHANGELOG.md) - Version history
-- [examples/](examples/) - Code examples
+**Where do the sentinel errors (`ErrInvalidColumnName`, etc.) come from now?**
+`*ValidationError` implements `Unwrap()` in v2, so `errors.Is(err,
+datatables.ErrInvalidColumnName)` works. In v1 this never matched, even
+though the sentinels were declared.

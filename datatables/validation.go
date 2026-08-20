@@ -1,6 +1,10 @@
 package datatables
 
-import "regexp"
+import (
+	"regexp"
+
+	"github.com/bonarizki-dat/Datatables-Gin/v2/datatables/dto"
+)
 
 // columnNamePattern defines the allowed pattern for column names
 // Allows: alphanumeric characters, underscores, and dots (for table.column notation)
@@ -33,6 +37,7 @@ func validateSearchableColumns(columns []string) error {
 			return &ValidationError{
 				Field:   col,
 				Message: "searchable column name contains invalid characters",
+				Err:     ErrInvalidColumnName,
 			}
 		}
 	}
@@ -49,12 +54,46 @@ func validateOrderableColumns(columns map[string]string) error {
 			return &ValidationError{
 				Field:   key,
 				Message: "orderable column key contains invalid characters",
+				Err:     ErrInvalidColumnName,
 			}
 		}
 		if !isValidColumnName(val) {
 			return &ValidationError{
 				Field:   val,
 				Message: "orderable column value contains invalid characters",
+				Err:     ErrInvalidColumnName,
+			}
+		}
+	}
+	return nil
+}
+
+// isValidOrderDirection reports whether dir is "asc" or "desc"
+// (case-insensitive).
+func isValidOrderDirection(dir string) bool {
+	return dir == "asc" || dir == "desc" || dir == "ASC" || dir == "DESC"
+}
+
+// validateDefaultOrders validates every Options.DefaultOrders entry so that
+// WithDefaultOrder cannot be used to pass unvalidated SQL into query.Order(),
+// unlike the v1 free-form string.
+//
+// Returns an error if any column name is invalid or any direction is not
+// "asc"/"desc".
+func validateDefaultOrders(orders []dto.Order) error {
+	for _, o := range orders {
+		if !isValidColumnName(o.Column) {
+			return &ValidationError{
+				Field:   o.Column,
+				Message: "default order column contains invalid characters",
+				Err:     ErrInvalidColumnName,
+			}
+		}
+		if !isValidOrderDirection(o.Dir) {
+			return &ValidationError{
+				Field:   o.Dir,
+				Message: "default order direction must be \"asc\" or \"desc\"",
+				Err:     ErrInvalidOrderDirection,
 			}
 		}
 	}

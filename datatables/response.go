@@ -3,40 +3,32 @@ package datatables
 import (
 	"net/http"
 
-	"github.com/bonarizki-dat/Datatables-Gin/datatables/dto"
+	"github.com/bonarizki-dat/Datatables-Gin/v2/datatables/dto"
 	"github.com/gin-gonic/gin"
 )
 
-// JSON is a convenience helper that sends a standardized DataTables response.
-// It wraps the DataTables result in a SuccessResponse structure and sends it
-// as JSON with HTTP 200 OK status.
-//
-// Parameters:
-//   - c: Gin context
-//   - res: DataTables response containing draw, records total/filtered, and data
+// JSON sends the DataTables result as the HTTP response body with draw,
+// recordsTotal, recordsFiltered, and data at the JSON root — the shape a
+// stock jQuery DataTables client expects from a serverSide ajax source.
 //
 // Example:
-//   result, err := datatables.OfReturn(c, query, &users, searchable, orderable, opts)
-//   if err != nil {
-//       c.JSON(500, gin.H{"error": err.Error()})
-//       return
-//   }
-//   datatables.JSON(c, result)
+//
+//	result, err := datatables.OfReturn(c, query, &users, searchable, orderable, opts)
+//	if err != nil {
+//	    datatables.JSONError(c, http.StatusInternalServerError, "failed to load users")
+//	    return
+//	}
+//	datatables.JSON(c, result)
 func JSON(c *gin.Context, res dto.Datatables) {
-	dto.ResponseDatatables(c, http.StatusOK, res, "success")
+	c.JSON(http.StatusOK, res)
 }
 
-// JSONError is a convenience helper for sending error responses in a consistent format.
+// JSONError sends a DataTables-compatible error response: a root-level
+// "error" string.
 //
-// Parameters:
-//   - c: Gin context
-//   - statusCode: HTTP status code (e.g., 400, 500)
-//   - message: Error message to display
+// message should be a safe, user-facing description. Do not pass
+// err.Error() directly — database and schema details should not reach the
+// client; log the underlying error server-side instead.
 func JSONError(c *gin.Context, statusCode int, message string) {
-	c.JSON(statusCode, dto.SuccessResponse{
-		Success: false,
-		Message: message,
-		Data:    nil,
-		Errors:  message,
-	})
+	c.JSON(statusCode, dto.ErrorResponse{Error: message})
 }

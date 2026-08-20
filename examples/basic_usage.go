@@ -1,9 +1,12 @@
 package examples
 
 import (
+	"fmt"
+	"log"
+	"net/http"
 	"time"
 
-	"github.com/bonarizki-dat/Datatables-Gin/datatables"
+	"github.com/bonarizki-dat/Datatables-Gin/v2/datatables"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -16,8 +19,7 @@ type User struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// BasicUsage demonstrates the simplest way to use the package
-// This is the SAME as before - no breaking changes!
+// BasicUsage demonstrates the simplest way to use the package.
 func BasicUsage(c *gin.Context, db *gorm.DB) {
 	var users []User
 
@@ -30,7 +32,6 @@ func BasicUsage(c *gin.Context, db *gorm.DB) {
 		"email": "email",
 	}
 
-	// Create options (same as before)
 	opts := datatables.NewOptions()
 
 	// Process DataTables request
@@ -44,15 +45,17 @@ func BasicUsage(c *gin.Context, db *gorm.DB) {
 	)
 
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		// Log the real error server-side; never send err.Error() to the
+		// client, since it can contain database/schema details.
+		log.Printf("BasicUsage: OfReturn failed: %v", err)
+		datatables.JSONError(c, http.StatusInternalServerError, "failed to load users")
 		return
 	}
 
 	datatables.JSON(c, result)
 }
 
-// ImprovedUsage shows new optional features
-// Old code doesn't need to use these!
+// ImprovedUsage shows the default-order and strict-order options.
 func ImprovedUsage(c *gin.Context, db *gorm.DB) {
 	var users []User
 
@@ -64,10 +67,10 @@ func ImprovedUsage(c *gin.Context, db *gorm.DB) {
 		"created": "created_at",
 	}
 
-	// NEW: Optional improvements
 	opts := datatables.NewOptions().
-		WithDefaultOrder("created_at DESC"). // Prevent "column not found" errors
-		WithIndex("row_num", true)           // Custom index column
+		WithDefaultOrder("created_at", "desc"). // applied when the request has no valid order
+		WithStrictOrder(true).                  // fail loudly on an unknown order key instead of silently skipping it
+		WithIndex("row_num", true)              // custom index column
 
 	result, err := datatables.OfReturn(
 		c,
@@ -79,15 +82,15 @@ func ImprovedUsage(c *gin.Context, db *gorm.DB) {
 	)
 
 	if err != nil {
-		// NEW: Optional error helper
-		datatables.JSONError(c, 500, err.Error())
+		log.Printf("ImprovedUsage: OfReturn failed: %v", err)
+		datatables.JSONError(c, http.StatusInternalServerError, "failed to load users")
 		return
 	}
 
 	datatables.JSON(c, result)
 }
 
-// AdvancedUsage shows all features including custom columns
+// AdvancedUsage shows all features including custom columns.
 func AdvancedUsage(c *gin.Context, db *gorm.DB) {
 	var users []User
 
@@ -100,11 +103,12 @@ func AdvancedUsage(c *gin.Context, db *gorm.DB) {
 	}
 
 	opts := datatables.NewOptions().
-		WithDefaultOrder("created_at DESC").
+		WithDefaultOrder("created_at", "desc").
 		WithIndex("DT_RowIndex", false).
 		Add("actions", func(row map[string]interface{}) interface{} {
-			id := row["id"]
-			return `<a href="/users/` + id.(string) + `/edit">Edit</a>`
+			// User.ID is uint, so it comes through as a numeric type, not a
+			// string; format it instead of asserting row["id"].(string).
+			return fmt.Sprintf(`<a href="/users/%v/edit">Edit</a>`, row["id"])
 		}).
 		Remove("created_at") // Hide internal field
 
@@ -118,7 +122,8 @@ func AdvancedUsage(c *gin.Context, db *gorm.DB) {
 	)
 
 	if err != nil {
-		datatables.JSONError(c, 500, err.Error())
+		log.Printf("AdvancedUsage: OfReturn failed: %v", err)
+		datatables.JSONError(c, http.StatusInternalServerError, "failed to load users")
 		return
 	}
 

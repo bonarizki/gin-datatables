@@ -14,21 +14,27 @@ import (
 //   - `json:"-"`: Field is excluded from output
 //   - No tag: Uses the field name as-is
 //
+// Embedded (anonymous) struct fields, such as gorm.Model, are flattened into
+// the parent map rather than nested under the embedded type's name, and the
+// outer struct's own fields take precedence over anything an embedded type
+// would otherwise contribute — matching encoding/json's behavior.
+//
 // Parameters:
 //   - data: Pointer to a slice of structs (e.g., *[]User)
 //
-// Returns a slice of maps where each map represents one struct instance.
-// Returns nil if the input is not a valid slice.
+// Returns a slice of maps where each map represents one struct instance, and
+// an error if data is not a pointer to a slice of structs (ErrInvalidData).
 //
 // Example:
-//   type User struct {
-//       ID   int    `json:"id"`
-//       Name string `json:"name"`
-//   }
-//   users := []User{{ID: 1, Name: "John"}}
-//   result := structToMapSlice(&users)
-//   // result: [{"id": 1, "name": "John"}]
-func structToMapSlice(data interface{}) []map[string]interface{} {
+//
+//	type User struct {
+//	    ID   int    `json:"id"`
+//	    Name string `json:"name"`
+//	}
+//	users := []User{{ID: 1, Name: "John"}}
+//	result, err := structToMapSlice(&users)
+//	// result: [{"id": 1, "name": "John"}]
+func structToMapSlice(data interface{}) ([]map[string]interface{}, error) {
 	v := reflect.ValueOf(data)
 
 	// Dereference pointer if necessary
@@ -38,7 +44,7 @@ func structToMapSlice(data interface{}) []map[string]interface{} {
 
 	// Validate that we have a slice
 	if v.Kind() != reflect.Slice {
-		return nil
+		return nil, ErrInvalidData
 	}
 
 	result := make([]map[string]interface{}, 0, v.Len())
@@ -49,45 +55,74 @@ func structToMapSlice(data interface{}) []map[string]interface{} {
 
 		// Dereference pointer if necessary
 		if item.Kind() == reflect.Ptr {
+			if item.IsNil() {
+				result = append(result, map[string]interface{}{})
+				continue
+			}
 			item = item.Elem()
 		}
 
-		// Convert struct to map
-		m := structToMap(item)
-		result = append(result, m)
+		if item.Kind() != reflect.Struct {
+			return nil, ErrInvalidData
+		}
+
+		result = append(result, structToMap(item))
 	}
 
-	return result
+	return result, nil
 }
 
 // structToMap converts a single struct value to a map[string]interface{}.
-// It processes all exported fields and respects JSON tags.
+// It processes all exported fields, respects JSON tags, and flattens
+// embedded struct fields via collectFields.
 func structToMap(v reflect.Value) map[string]interface{} {
 	m := make(map[string]interface{})
+	collectFields(v, m)
+	return m
+}
 
-	// Iterate through all fields in the struct
+// collectFields writes v's own directly-declared fields into m first, so
+// they take precedence, then merges in any embedded struct's fields for
+// keys not already present. Recursing after the direct fields are set means
+// the shallowest declaration always wins on a name collision, the same rule
+// encoding/json applies to embedded types.
+func collectFields(v reflect.Value, m map[string]interface{}) {
+	t := v.Type()
+
 	for j := 0; j < v.NumField(); j++ {
-		field := v.Type().Field(j)
-		fieldValue := v.Field(j)
-
-		// Skip unexported fields
-		if !field.IsExported() {
+		field := t.Field(j)
+		if !field.IsExported() || field.Anonymous {
 			continue
 		}
 
-		// Determine the map key from JSON tag or field name
 		col := getFieldName(field)
-
-		// Skip fields marked with json:"-"
 		if col == "" {
 			continue
 		}
 
-		// Add field to map
-		m[col] = fieldValue.Interface()
+		if _, exists := m[col]; !exists {
+			m[col] = v.Field(j).Interface()
+		}
 	}
 
-	return m
+	for j := 0; j < v.NumField(); j++ {
+		field := t.Field(j)
+		if !field.IsExported() || !field.Anonymous {
+			continue
+		}
+
+		embedded := v.Field(j)
+		if embedded.Kind() == reflect.Ptr {
+			if embedded.IsNil() {
+				continue
+			}
+			embedded = embedded.Elem()
+		}
+
+		if embedded.Kind() == reflect.Struct {
+			collectFields(embedded, m)
+		}
+	}
 }
 
 // getFieldName extracts the field name from the JSON struct tag.

@@ -2,9 +2,18 @@
 
 **Honest evaluation against industry standards**
 
+> **Note (v2.0.0):** this assessment was written for v1.1.0. Since then, an
+> audit found that v1.1.0's search feature had a cross-tenant data leak (the
+> OR chain across searchable columns escaped the caller's own `WHERE`
+> clause), pagination could be disabled entirely via `length=0`/`-1`, and
+> `datatables/parser.go`/`processor.go` — where both issues lived — had zero
+> test coverage. All of this is fixed in v2.0.0; see
+> [CHANGELOG.md](CHANGELOG.md). The scores and coverage figures below are
+> historical and describe v1.1.0, not the current release.
+
 ---
 
-## 🎯 Overall Rating: **7.5/10** (Good, Production-Ready)
+## 🎯 Overall Rating: **7.5/10** (v1.1.0, historical — see note above)
 
 ---
 
@@ -41,18 +50,25 @@
 - ✅ Examples provided
 - ⚠️ Could add godoc.org badge
 
-### 4. **Security** (8/10)
+### 4. **Security** (v1.1.0, historical — see note at top of this document)
 - ✅ Column name validation (SQL injection prevention)
-- ✅ Parameterized queries
-- ✅ Input sanitization
-- ✅ Maximum page size enforcement
+- ✅ Parameterized queries (values, not structure)
+- 🔴 Global search's OR chain was not grouped, so it could escape a
+  caller's own `WHERE` clause (cross-tenant data leak) — fixed in v2.0.0
+- 🔴 Search values were not escaped for LIKE wildcards (`%`, `_`) — fixed
+  in v2.0.0
+- 🔴 `length=0`/invalid/`-1` disabled `LIMIT` entirely; only the upper
+  bound (500) was actually enforced — fixed in v2.0.0
 - ⚠️ Could add rate limiting support
 - ⚠️ Could add input length validation
 
-### 5. **Testing** (6.5/10)
-- ✅ 56.1% total coverage
+### 5. **Testing** (6.5/10, historical — v2.0.0 is 92.8%)
+- ✅ 57.4% total coverage (this doc previously said 56.1%, which
+  didn't match the measured figure)
 - ✅ 33+ test cases
-- ✅ Good unit test coverage
+- ⚠️ Zero coverage for `parser.go`/`processor.go` — the search, ordering,
+  and pagination logic, which is exactly where the v1.1.0 data leak and
+  unbounded-pagination bugs lived
 - ⚠️ No integration tests
 - ⚠️ No benchmark tests
 - ⚠️ Coverage < 80% (industry standard)
@@ -62,7 +78,7 @@
 
 ## ⚠️ What Could Be Better
 
-### 1. **Test Coverage** (Current: 56.1%)
+### 1. **Test Coverage** (v1.1.0: 57.4%, `parser.go`/`processor.go` untested — v2.0.0: 92.8%)
 
 **Missing:**
 - Integration tests with real database
@@ -304,10 +320,10 @@ Most Go DataTables packages are abandoned or basic. This package is **above aver
 ## 💬 Honest Summary
 
 ### The Good:
-Your package is **well-crafted**, **secure**, and **production-ready** for standard use cases. The code quality is high, documentation is excellent, and the API is clean. It's **better than most Go DataTables packages** out there.
+The package is **well-organized** and **production-ready for its features** for standard use cases. The code quality is high, documentation is extensive, and the API is clean. It's **better-organized than most Go DataTables packages** out there.
 
 ### The Reality:
-It's a **solid 7.5/10** - good enough for production, but not feature-complete compared to mature solutions like Yajra. The 56% test coverage is acceptable but could be better. Missing CI/CD and advanced features.
+It's a **solid 7.5/10 on code organization**, but the security score above was too generous: the search feature had a cross-tenant data leak and pagination could be disabled entirely, both in the exact code paths (`parser.go`/`processor.go`) that had zero test coverage. The 57.4% test coverage number understated the risk, because coverage was concentrated in the *safe* files. See the note at the top of this document for the v2.0.0 fixes.
 
 ### The Verdict:
 **Publish it!** This is a valuable contribution to the Go community. Most people don't need 100% feature parity with Yajra - they need a clean, secure, well-documented package that works. You have that.
@@ -320,15 +336,13 @@ It's a **solid 7.5/10** - good enough for production, but not feature-complete c
 
 ---
 
-## 🎖️ Final Rating: **7.5/10**
+## 🎖️ Final Rating: **7.5/10** (v1.1.0, historical)
 
-**Production-ready? Yes.**
-**Well-coded? Yes.**
-**Secure? Yes.**
-**Feature-complete? No, but good enough.**
+**Well-organized code? Yes.**
+**Secure? No — see the note at the top of this document and [CHANGELOG.md](CHANGELOG.md) v2.0.0.**
+**Feature-complete? No, but reasonable scope for a v1.**
 
-**Recommendation: SHIP IT! 🚀**
-
-Users will appreciate having a clean, secure, well-documented DataTables package for Go. You can always add features in v1.2.0, v1.3.0, etc.
-
-Perfect is the enemy of good. This is **good** - go make it **great** based on real user feedback.
+v2.0.0 fixes the search data leak, the unbounded-pagination gap, and closes
+the test-coverage hole in `parser.go`/`processor.go` that let both ship
+unnoticed. See [CHANGELOG.md](CHANGELOG.md) and
+[MIGRATING.md](MIGRATING.md) before upgrading.

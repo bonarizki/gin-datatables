@@ -4,28 +4,34 @@
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Tests](https://img.shields.io/badge/tests-passing-brightgreen.svg)](datatables/)
 
-A **reusable, secure, and powerful DataTables-style server-side processor** for **Gin + GORM** in Go.
-Inspired by [Yajra DataTables](https://github.com/yajra/laravel-datatables) (Laravel), designed for clean, composable, and production-ready data handling in APIs.
+A **DataTables-style server-side processor** for **Gin + GORM** in Go.
+Inspired by [Yajra DataTables](https://github.com/yajra/laravel-datatables) (Laravel), designed for clean, composable data handling in APIs.
+
+> **v2.0.0 is a breaking change from v1.x.** It fixes a cross-tenant data leak in
+> global search, spec-compliant ordering, unbounded pagination, and a response
+> shape the stock DataTables client couldn't read. See
+> [MIGRATING.md](MIGRATING.md) before upgrading, and
+> [CHANGELOG.md](CHANGELOG.md) for the full list.
 
 ---
 
 ## ✨ Features
 
-- 🔁 **Automatic Processing**: Handles pagination, ordering, and search out of the box
-- 🛡️ **Security First**: Built-in SQL injection prevention and column validation
+- 🔁 **Automatic Processing**: Handles pagination, ordering, and search, bounded by default
+- 🛡️ **Search isolation**: Global search is grouped so it cannot escape a caller's own `WHERE` clause, and LIKE wildcards are escaped
 - 🧱 **Simple API**: Similar to Yajra DataTables, easy to learn and use
 - ⚙️ **Highly Customizable**: Add, edit, or remove columns dynamically
 - 📊 **Gin + GORM**: Works seamlessly with Gin framework and GORM ORM
 - 💡 **Type-Safe**: Generic implementation (`OfReturn[T any]`) for compile-time safety
-- 🧪 **Well-Tested**: Comprehensive unit tests with >90% coverage
-- 📦 **Production-Ready**: Configurable defaults, error handling, and validation
+- 🧪 **Tested**: 92.8% coverage as of v2.0.0, including SQL-level tests for the search and ordering logic
+- 📦 **Column validation**: Searchable/orderable/default-order columns are checked against an identifier whitelist before reaching SQL
 
 ---
 
 ## 📦 Installation
 
 ```bash
-go get github.com/bonarizki-dat/Datatables-Gin
+go get github.com/bonarizki-dat/Datatables-Gin/v2
 ```
 
 **Requirements:**
@@ -43,7 +49,11 @@ go get github.com/bonarizki-dat/Datatables-Gin
 package main
 
 import (
-    "github.com/bonarizki-dat/Datatables-Gin/datatables"
+    "log"
+    "net/http"
+    "time"
+
+    "github.com/bonarizki-dat/Datatables-Gin/v2/datatables"
     "github.com/gin-gonic/gin"
     "gorm.io/gorm"
 )
@@ -70,7 +80,7 @@ func GetUsers(c *gin.Context, db *gorm.DB) {
 
     // Configure options
     opts := datatables.NewOptions().
-        WithDefaultOrder("created_at DESC")
+        WithDefaultOrder("created_at", "desc")
 
     // Process DataTables request
     result, err := datatables.OfReturn(
@@ -83,7 +93,10 @@ func GetUsers(c *gin.Context, db *gorm.DB) {
     )
 
     if err != nil {
-        datatables.JSONError(c, 500, err.Error())
+        // Log the real error server-side; don't send err.Error() to the
+        // client, since it can contain database/schema details.
+        log.Printf("GetUsers: %v", err)
+        datatables.JSONError(c, http.StatusInternalServerError, "failed to load users")
         return
     }
 
@@ -92,6 +105,10 @@ func GetUsers(c *gin.Context, db *gorm.DB) {
 ```
 
 ### Frontend Integration
+
+`datatables.JSON()` writes `draw`, `recordsTotal`, `recordsFiltered`, and `data`
+at the root of the response body, so a stock `serverSide: true` DataTables
+config works with no `ajax.dataSrc` override:
 
 ```html
 <table id="users-table">
@@ -202,7 +219,7 @@ func GetProducts(c *gin.Context, db *gorm.DB) {
 
     opts := datatables.NewOptions().
         WithIndex("row_num", true).
-        WithDefaultOrder("created_at DESC").
+        WithDefaultOrder("created_at", "desc").
         Add("price_formatted", func(row map[string]interface{}) interface{} {
             price := row["price"].(float64)
             return fmt.Sprintf("$%.2f", price)
@@ -231,7 +248,8 @@ func GetProducts(c *gin.Context, db *gorm.DB) {
     )
 
     if err != nil {
-        datatables.JSONError(c, 500, err.Error())
+        log.Printf("GetProducts: %v", err)
+        datatables.JSONError(c, http.StatusInternalServerError, "failed to load products")
         return
     }
 
@@ -245,7 +263,8 @@ func GetProducts(c *gin.Context, db *gorm.DB) {
 
 ### SQL Injection Prevention
 
-All column names are validated against a whitelist pattern before being used in queries:
+Column names passed as `searchable`, `orderable`, or via `WithDefaultOrder` are
+validated against a whitelist pattern before being used in queries:
 
 ```go
 // ✅ Valid column names
@@ -259,29 +278,50 @@ All column names are validated against a whitelist pattern before being used in 
 "id--"
 ```
 
+`WithDefaultOrder(col, dir string)` validates both arguments the same way —
+unlike v1, it no longer accepts a free-form SQL fragment.
+
 ### Validation Errors
 
-The package returns descriptive errors for security violations:
+The package returns errors wrapping one of the sentinel values in
+`errors.go` (`ErrInvalidColumnName`, `ErrInvalidOrderColumn`,
+`ErrInvalidOrderDirection`, `ErrInvalidData`), so callers can branch on the
+failure kind with `errors.Is` instead of parsing the message string:
 
 ```go
 result, err := datatables.OfReturn(c, query, &users, searchable, orderable, opts)
 if err != nil {
-    // Handle validation errors
-    log.Printf("DataTables error: %v", err)
-    datatables.JSONError(c, 400, "Invalid column name")
+    log.Printf("DataTables error: %v", err) // log the real error server-side
+    if errors.Is(err, datatables.ErrInvalidColumnName) {
+        datatables.JSONError(c, http.StatusBadRequest, "invalid column configuration")
+        return
+    }
+    datatables.JSONError(c, http.StatusInternalServerError, "failed to load data")
     return
 }
 ```
 
-### Safe Search Queries
+### Search isolation and safe LIKE patterns
 
-All search values use parameterized queries:
+Global search is grouped into its own parenthesized clause, so it cannot
+escape a `WHERE` the caller already applied (e.g. tenant scoping), and `%`,
+`_`, and `\` are escaped in the search value before it reaches the query:
 
 ```go
-// Automatically converts to safe parameterized query:
-// WHERE LOWER(name) LIKE LOWER(?) OR LOWER(email) LIKE LOWER(?)
-// Parameters: ["%search_value%", "%search_value%"]
+// db.Model(&User{}).Where("tenant_id = ?", tenantID)
+// search value: "x"
+// generates:
+// WHERE tenant_id = ? AND (LOWER(name) LIKE LOWER(?) ESCAPE '\' OR LOWER(code) LIKE LOWER(?) ESCAPE '\')
+// vars: [tenantID, "%x%", "%x%"]
 ```
+
+### Bounded pagination
+
+`length` is always clamped between 1 and `Options.MaxPageSize` (500 by
+default) unless the request omits it or sends a value that can't be parsed,
+in which case `Options.DefaultPageSize` (10 by default) is used. A client
+cannot force an unbounded result set with `length=0` or `length=-1` unless
+the server has explicitly opted in via `WithUnlimitedPageSize(true)`.
 
 ---
 
@@ -313,12 +353,14 @@ func OfReturn[T any](
 - `opts` - Configuration options
 
 **Returns:**
-- `dto.Datatables` - Response compatible with DataTables JSON format
-- `error` - Validation or database errors
+- `dto.Datatables` - `{Draw, RecordsTotal, RecordsFiltered, Data}`, written at
+  the JSON root by `JSON()`
+- `error` - Validation or database errors, wrapping a sentinel from `errors.go`
 
 #### `JSON()`
 
-Sends a standardized DataTables JSON response.
+Writes `dto.Datatables` at the root of the HTTP response body — the shape a
+stock jQuery DataTables client expects from `serverSide: true`.
 
 ```go
 datatables.JSON(c, result)
@@ -326,17 +368,20 @@ datatables.JSON(c, result)
 
 #### `JSONError()`
 
-Sends a consistent error response.
+Sends a `{"error": "..."}` response. Pass a safe, user-facing message —
+never `err.Error()` directly, since it can leak database/schema details.
 
 ```go
-datatables.JSONError(c, 500, "Database error")
+datatables.JSONError(c, http.StatusInternalServerError, "failed to load users")
 ```
 
 ### Options Builder
 
 #### `NewOptions()`
 
-Creates a new Options instance with defaults.
+Creates a new Options instance with defaults: `DefaultPageSize` 10,
+`MaxPageSize` 500, `UnlimitedPageSize` false, `StrictOrder` false, no
+`DefaultOrders`.
 
 ```go
 opts := datatables.NewOptions()
@@ -350,12 +395,43 @@ Configures the index column.
 opts.WithIndex("DT_RowIndex", false)
 ```
 
-#### `WithDefaultOrder(order string)`
+#### `WithDefaultOrder(col string, dir string)`
 
-Sets default ordering when none is specified.
+Appends a column/direction pair applied when the request has no valid
+order. Call it multiple times for a multi-column default order. Unlike v1,
+`col` and `dir` are validated the same way as searchable/orderable columns
+instead of accepting a free-form SQL fragment.
 
 ```go
-opts.WithDefaultOrder("created_at DESC")
+opts.WithDefaultOrder("created_at", "desc")
+```
+
+#### `WithStrictOrder(strict bool)`
+
+When `true`, `OfReturn` returns `ErrInvalidOrderColumn` if the request's
+order key is not in the orderable map, instead of logging a warning and
+falling back to `DefaultOrders`. Recommended in development so
+frontend/backend wiring mistakes fail loudly.
+
+```go
+opts.WithStrictOrder(true)
+```
+
+#### `WithPageSize(def int, max int)`
+
+Sets the default and maximum page sizes.
+
+```go
+opts.WithPageSize(25, 200)
+```
+
+#### `WithUnlimitedPageSize(allow bool)`
+
+Allows a client to request `length=-1` for "all rows", bypassing
+`MaxPageSize`. Off by default.
+
+```go
+opts.WithUnlimitedPageSize(true)
 ```
 
 #### `Add(col string, fn func)`
@@ -396,11 +472,15 @@ Run the test suite:
 go test ./datatables/... -v
 ```
 
-Run with coverage:
+Run with coverage (92.8% as of v2.0.0):
 
 ```bash
 go test ./datatables/... -cover
 ```
+
+`parser_test.go` and `processor_test.go` cover the request parsing,
+search-grouping, and ordering logic with `gorm.Config{DryRun: true}`,
+asserting on the generated SQL directly — no database required.
 
 ---
 
@@ -417,6 +497,8 @@ datatables/
 ├── validation.go      # Security validation
 ├── errors.go          # Error types
 ├── response.go        # JSON response helpers
+├── parser_test.go     # ParseParams table-driven tests
+├── processor_test.go  # DryRun SQL assertions (search, ordering, OfReturn)
 └── dto/
     ├── request.go     # Request DTOs
     └── response.go    # Response DTOs

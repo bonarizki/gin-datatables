@@ -1,6 +1,7 @@
 package datatables
 
 import (
+	"errors"
 	"reflect"
 	"testing"
 )
@@ -18,6 +19,22 @@ type TestProduct struct {
 	Price     float64 `json:"price,omitempty"`
 }
 
+type TestBaseModel struct {
+	ID        int    `json:"id"`
+	CreatedAt string `json:"created_at"`
+}
+
+type TestEmbeddedUser struct {
+	TestBaseModel
+	Name string `json:"name"`
+}
+
+type TestOverriddenID struct {
+	TestBaseModel
+	ID   int `json:"id"` // must win over the embedded ID
+	Name string
+}
+
 func TestStructToMapSlice(t *testing.T) {
 	t.Run("Convert user slice", func(t *testing.T) {
 		users := []TestUser{
@@ -25,7 +42,10 @@ func TestStructToMapSlice(t *testing.T) {
 			{ID: 2, Name: "Jane Smith", Email: "jane@example.com", Password: "secret2"},
 		}
 
-		result := structToMapSlice(&users)
+		result, err := structToMapSlice(&users)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
 
 		if len(result) != 2 {
 			t.Errorf("Expected 2 results, got %d", len(result))
@@ -49,7 +69,10 @@ func TestStructToMapSlice(t *testing.T) {
 			{ProductID: 1, Title: "Laptop", Price: 999.99},
 		}
 
-		result := structToMapSlice(&products)
+		result, err := structToMapSlice(&products)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
 
 		if len(result) != 1 {
 			t.Errorf("Expected 1 result, got %d", len(result))
@@ -73,7 +96,10 @@ func TestStructToMapSlice(t *testing.T) {
 
 	t.Run("Empty slice", func(t *testing.T) {
 		users := []TestUser{}
-		result := structToMapSlice(&users)
+		result, err := structToMapSlice(&users)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
 
 		if len(result) != 0 {
 			t.Errorf("Expected 0 results, got %d", len(result))
@@ -82,10 +108,75 @@ func TestStructToMapSlice(t *testing.T) {
 
 	t.Run("Invalid input - not a slice", func(t *testing.T) {
 		notASlice := "invalid"
-		result := structToMapSlice(&notASlice)
+		result, err := structToMapSlice(&notASlice)
 
+		if !errors.Is(err, ErrInvalidData) {
+			t.Errorf("Expected ErrInvalidData, got %v", err)
+		}
 		if result != nil {
 			t.Error("Expected nil for invalid input")
+		}
+	})
+
+	t.Run("Invalid input - slice of non-structs", func(t *testing.T) {
+		notStructs := []string{"a", "b"}
+		result, err := structToMapSlice(&notStructs)
+
+		if !errors.Is(err, ErrInvalidData) {
+			t.Errorf("Expected ErrInvalidData, got %v", err)
+		}
+		if result != nil {
+			t.Error("Expected nil for invalid input")
+		}
+	})
+
+	t.Run("Nil pointer element does not panic", func(t *testing.T) {
+		users := []*TestUser{nil, {ID: 1, Name: "John"}}
+		result, err := structToMapSlice(&users)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		if len(result) != 2 {
+			t.Fatalf("Expected 2 results, got %d", len(result))
+		}
+		if result[1]["id"] != 1 {
+			t.Errorf("Expected id=1, got %v", result[1]["id"])
+		}
+	})
+
+	t.Run("Embedded struct is flattened, not nested", func(t *testing.T) {
+		users := []TestEmbeddedUser{
+			{TestBaseModel: TestBaseModel{ID: 7, CreatedAt: "2026-01-01"}, Name: "bob"},
+		}
+		result, err := structToMapSlice(&users)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		if result[0]["id"] != 7 {
+			t.Errorf("Expected embedded id=7 to be promoted to root, got %v", result[0]["id"])
+		}
+		if result[0]["created_at"] != "2026-01-01" {
+			t.Errorf("Expected embedded created_at to be promoted to root, got %v", result[0]["created_at"])
+		}
+		if result[0]["name"] != "bob" {
+			t.Errorf("Expected name=bob, got %v", result[0]["name"])
+		}
+		if _, exists := result[0]["TestBaseModel"]; exists {
+			t.Error("Embedded struct must not appear nested under its type name")
+		}
+	})
+
+	t.Run("Outer field wins over embedded field with the same key", func(t *testing.T) {
+		users := []TestOverriddenID{
+			{TestBaseModel: TestBaseModel{ID: 1}, ID: 99, Name: "alice"},
+		}
+		result, err := structToMapSlice(&users)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		if result[0]["id"] != 99 {
+			t.Errorf("Expected outer id=99 to win over embedded id=1, got %v", result[0]["id"])
 		}
 	})
 }

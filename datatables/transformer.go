@@ -41,15 +41,19 @@ func applyOptions(data []map[string]interface{}, opts Options, start int) []map[
 			}
 		}
 
-		// Step 2: Add custom columns
+		// Step 2: Add custom columns. Callbacks receive newRow (not the
+		// original row), so they can read the index column added in Step 1.
+		// Map iteration order is unspecified, so an AddColumns callback
+		// should not depend on another AddColumns entry also being present.
 		for colName, fn := range opts.AddColumns {
-			newRow[colName] = fn(row)
+			newRow[colName] = fn(newRow)
 		}
 
-		// Step 3: Edit existing columns
+		// Step 3: Edit existing columns. Callbacks also see newRow, so they
+		// observe columns added in Step 1/2 as well as the original data.
 		for colName, fn := range opts.EditColumns {
 			if val, ok := newRow[colName]; ok {
-				newRow[colName] = fn(val, row)
+				newRow[colName] = fn(val, newRow)
 			}
 		}
 

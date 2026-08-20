@@ -14,8 +14,20 @@ func TestNewOptions(t *testing.T) {
 	if opts.ResetIndex != false {
 		t.Error("Expected ResetIndex=false")
 	}
-	if opts.DefaultOrder != "" {
-		t.Errorf("Expected DefaultOrder='', got %q", opts.DefaultOrder)
+	if opts.DefaultOrders != nil {
+		t.Errorf("Expected DefaultOrders=nil, got %v", opts.DefaultOrders)
+	}
+	if opts.StrictOrder != false {
+		t.Error("Expected StrictOrder=false")
+	}
+	if opts.DefaultPageSize != 10 {
+		t.Errorf("Expected DefaultPageSize=10, got %d", opts.DefaultPageSize)
+	}
+	if opts.MaxPageSize != 500 {
+		t.Errorf("Expected MaxPageSize=500, got %d", opts.MaxPageSize)
+	}
+	if opts.UnlimitedPageSize != false {
+		t.Error("Expected UnlimitedPageSize=false")
 	}
 	if opts.AddColumns == nil {
 		t.Error("AddColumns should be initialized")
@@ -40,10 +52,45 @@ func TestOptionsWithIndex(t *testing.T) {
 }
 
 func TestOptionsWithDefaultOrder(t *testing.T) {
-	opts := NewOptions().WithDefaultOrder("created_at DESC")
+	opts := NewOptions().WithDefaultOrder("created_at", "desc")
 
-	if opts.DefaultOrder != "created_at DESC" {
-		t.Errorf("Expected DefaultOrder='created_at DESC', got %q", opts.DefaultOrder)
+	if len(opts.DefaultOrders) != 1 {
+		t.Fatalf("Expected 1 default order, got %d", len(opts.DefaultOrders))
+	}
+	if opts.DefaultOrders[0].Column != "created_at" || opts.DefaultOrders[0].Dir != "desc" {
+		t.Errorf("Expected {created_at desc}, got %+v", opts.DefaultOrders[0])
+	}
+}
+
+func TestOptionsWithDefaultOrderMultiColumn(t *testing.T) {
+	opts := NewOptions().WithDefaultOrder("status", "asc").WithDefaultOrder("created_at", "desc")
+
+	if len(opts.DefaultOrders) != 2 {
+		t.Fatalf("Expected 2 default orders, got %d", len(opts.DefaultOrders))
+	}
+	if opts.DefaultOrders[0].Column != "status" || opts.DefaultOrders[1].Column != "created_at" {
+		t.Errorf("Expected default orders in call order, got %+v", opts.DefaultOrders)
+	}
+}
+
+func TestOptionsWithStrictOrder(t *testing.T) {
+	opts := NewOptions().WithStrictOrder(true)
+	if !opts.StrictOrder {
+		t.Error("Expected StrictOrder=true")
+	}
+}
+
+func TestOptionsWithPageSize(t *testing.T) {
+	opts := NewOptions().WithPageSize(25, 200)
+	if opts.DefaultPageSize != 25 || opts.MaxPageSize != 200 {
+		t.Errorf("Expected {25 200}, got {%d %d}", opts.DefaultPageSize, opts.MaxPageSize)
+	}
+}
+
+func TestOptionsWithUnlimitedPageSize(t *testing.T) {
+	opts := NewOptions().WithUnlimitedPageSize(true)
+	if !opts.UnlimitedPageSize {
+		t.Error("Expected UnlimitedPageSize=true")
 	}
 }
 
@@ -110,7 +157,7 @@ func TestOptionsRemove(t *testing.T) {
 func TestOptionsChaining(t *testing.T) {
 	opts := NewOptions().
 		WithIndex("row_num", true).
-		WithDefaultOrder("id DESC").
+		WithDefaultOrder("id", "desc").
 		Add("test_col", func(row map[string]interface{}) interface{} {
 			return "test"
 		}).
@@ -122,7 +169,7 @@ func TestOptionsChaining(t *testing.T) {
 	if opts.IndexColumn != "row_num" {
 		t.Error("Chaining failed for WithIndex")
 	}
-	if opts.DefaultOrder != "id DESC" {
+	if len(opts.DefaultOrders) != 1 || opts.DefaultOrders[0].Column != "id" {
 		t.Error("Chaining failed for WithDefaultOrder")
 	}
 	if len(opts.AddColumns) != 1 {

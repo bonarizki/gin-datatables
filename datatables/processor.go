@@ -1,18 +1,26 @@
 package datatables
 
 import (
-	"github.com/bonarizki-dat/Datatables-Gin/datatables/dto"
+	"context"
+	"fmt"
+	"log"
+	"strings"
+
+	"github.com/bonarizki-dat/Datatables-Gin/v2/datatables/dto"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // OfReturn executes the core DataTables server-side logic.
 // It supports searching, ordering, pagination, and custom column manipulation.
 //
 // Security features:
-//   - Validates all column names to prevent SQL injection
-//   - Sanitizes search input with parameterized queries
-//   - Enforces maximum page size limits
+//   - Validates all column names to prevent SQL injection, including Options.DefaultOrders
+//   - Groups global-search OR conditions so they cannot escape the caller's own WHERE clauses
+//   - Escapes LIKE wildcards in the search value
+//   - Enforces a bounded page size (Options.DefaultPageSize/MaxPageSize)
+//   - Propagates the request context, so a cancelled request stops its query
 //
 // Parameters:
 //   - c: Gin context containing request parameters
@@ -26,15 +34,16 @@ import (
 // or an error if validation fails or database operations fail.
 //
 // Example:
-//   var users []User
-//   result, err := datatables.OfReturn(
-//       c,
-//       db.Model(&User{}),
-//       &users,
-//       []string{"name", "email"},
-//       map[string]string{"name": "name", "email": "email", "created": "created_at"},
-//       datatables.NewOptions().WithDefaultOrder("created_at DESC"),
-//   )
+//
+//	var users []User
+//	result, err := datatables.OfReturn(
+//	    c,
+//	    db.Model(&User{}),
+//	    &users,
+//	    []string{"name", "email"},
+//	    map[string]string{"name": "name", "email": "email", "created": "created_at"},
+//	    datatables.NewOptions().WithDefaultOrder("created_at", "desc"),
+//	)
 func OfReturn[T any](
 	c *gin.Context,
 	query *gorm.DB,
@@ -43,52 +52,58 @@ func OfReturn[T any](
 	orderable map[string]string,
 	opts Options,
 ) (dto.Datatables, error) {
-	// Validate column names to prevent SQL injection
 	if err := validateSearchableColumns(searchable); err != nil {
 		return dto.Datatables{}, err
 	}
 	if err := validateOrderableColumns(orderable); err != nil {
 		return dto.Datatables{}, err
 	}
+	if err := validateDefaultOrders(opts.DefaultOrders); err != nil {
+		return dto.Datatables{}, err
+	}
 
-	// Parse DataTables request parameters
-	params := ParseParams(c)
+	ctx := context.Background()
+	if c.Request != nil {
+		ctx = c.Request.Context()
+	}
+	query = query.WithContext(ctx)
 
-	// Count total records (before filtering)
+	params := ParseParams(c, opts)
+
 	var total int64
 	if err := query.Session(&gorm.Session{}).Count(&total).Error; err != nil {
 		return dto.Datatables{}, err
 	}
 
-	// Apply filtering (global search)
 	filteredQuery := query.Session(&gorm.Session{})
 	if params.Search != "" && len(searchable) > 0 {
 		filteredQuery = applySearch(filteredQuery, searchable, params.Search)
 	}
 
-	// Count filtered records (after search, before pagination)
 	var filtered int64
 	if err := filteredQuery.Count(&filtered).Error; err != nil {
 		return dto.Datatables{}, err
 	}
 
-	// Apply ordering
-	filteredQuery = applyOrdering(filteredQuery, params, orderable, opts.DefaultOrder)
-
-	// Apply pagination
-	if params.Length > 0 {
-		filteredQuery = filteredQuery.Offset(params.Start).Limit(params.Length)
+	filteredQuery, err := applyOrdering(filteredQuery, params, orderable, opts, dest)
+	if err != nil {
+		return dto.Datatables{}, err
 	}
 
-	// Fetch results from database
+	if params.Length > 0 {
+		filteredQuery = filteredQuery.Offset(params.Start).Limit(params.Length)
+	} else {
+		filteredQuery = filteredQuery.Offset(params.Start)
+	}
+
 	if err := filteredQuery.Find(dest).Error; err != nil {
 		return dto.Datatables{}, err
 	}
 
-	// Convert struct slice to []map[string]interface{}
-	rows := structToMapSlice(dest)
-
-	// Apply DataTables options (add/edit/remove columns, indexes)
+	rows, err := structToMapSlice(dest)
+	if err != nil {
+		return dto.Datatables{}, err
+	}
 	rows = applyOptions(rows, opts, params.Start)
 
 	return dto.Datatables{
@@ -99,35 +114,91 @@ func OfReturn[T any](
 	}, nil
 }
 
-// applySearch adds global search conditions to the query.
-// Uses OR conditions across all searchable columns with case-insensitive matching.
+// applySearch adds a global search condition to the query, grouped in its
+// own parenthesized clause so the OR chain across searchable columns cannot
+// escape any WHERE conditions the caller already applied.
 func applySearch(query *gorm.DB, searchable []string, searchValue string) *gorm.DB {
+	pattern := "%" + escapeLike(searchValue) + "%"
+
+	group := query.Session(&gorm.Session{NewDB: true})
 	for i, col := range searchable {
-		searchPattern := "%" + searchValue + "%"
+		cond := "LOWER(" + col + ") LIKE LOWER(?) ESCAPE '\\'"
 		if i == 0 {
-			query = query.Where("LOWER("+col+") LIKE LOWER(?)", searchPattern)
+			group = group.Where(cond, pattern)
 		} else {
-			query = query.Or("LOWER("+col+") LIKE LOWER(?)", searchPattern)
+			group = group.Or(cond, pattern)
 		}
 	}
-	return query
+
+	return query.Where(group)
 }
 
-// applyOrdering adds ORDER BY clause to the query.
-// Uses the orderable map to translate frontend column names to database columns.
-// Falls back to defaultOrder if no order is specified.
-func applyOrdering(query *gorm.DB, params dto.Params, orderable map[string]string, defaultOrder string) *gorm.DB {
-	if params.Order != "" {
-		// Check if the requested column is in the orderable map
-		if col, ok := orderable[params.Order]; ok {
-			return query.Order(col + " " + params.Dir)
+// escapeLike neutralizes LIKE wildcards so a search for "100%" or "a_b"
+// is matched literally instead of being interpreted as a pattern.
+func escapeLike(s string) string {
+	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
+}
+
+// applyOrdering adds ORDER BY clauses to the query, then appends a primary
+// key tie-breaker so LIMIT/OFFSET paging stays stable.
+//
+// Every requested order column must be present in the orderable map. When
+// one is not: if opts.StrictOrder is set, ErrInvalidOrderColumn is returned;
+// otherwise the mismatch is logged and that column is skipped. If none of
+// the requested columns resolve, opts.DefaultOrders is applied. If that is
+// also empty, the query is left with no explicit ORDER BY beyond the
+// tie-breaker, rather than silently returning rows in an undefined order
+// under LIMIT/OFFSET.
+func applyOrdering[T any](query *gorm.DB, params dto.Params, orderable map[string]string, opts Options, dest *[]T) (*gorm.DB, error) {
+	applied := false
+
+	for _, o := range params.Orders {
+		col, ok := orderable[o.Column]
+		if !ok {
+			if opts.StrictOrder {
+				return nil, fmt.Errorf("%w: %q", ErrInvalidOrderColumn, o.Column)
+			}
+			log.Printf("datatables: order column %q not found in orderable map, skipping", o.Column)
+			continue
+		}
+		query = query.Order(col + " " + o.Dir)
+		applied = true
+	}
+
+	if !applied {
+		for _, d := range opts.DefaultOrders {
+			query = query.Order(d.Column + " " + d.Dir)
 		}
 	}
 
-	// Apply default ordering if specified and no valid order was provided
-	if defaultOrder != "" {
-		return query.Order(defaultOrder)
+	return withTieBreaker(query, dest), nil
+}
+
+// withTieBreaker appends the primary key so LIMIT/OFFSET paging stays stable
+// when the sorted column contains duplicate values.
+//
+// Reading query.Statement.Schema before the query executes is a no-op: GORM
+// only populates it inside Execute. To get a usable schema here, the model
+// is parsed explicitly from Statement.Model (set by the caller's own
+// .Model(&T{}) call) or, failing that, from dest.
+func withTieBreaker[T any](query *gorm.DB, dest *[]T) *gorm.DB {
+	stmt := query.Statement
+
+	model := stmt.Model
+	if model == nil {
+		model = dest
 	}
 
-	return query
+	if err := stmt.Parse(model); err != nil || stmt.Schema == nil {
+		return query
+	}
+
+	pk := stmt.Schema.PrioritizedPrimaryField
+	if pk == nil {
+		return query
+	}
+
+	return query.Order(clause.OrderByColumn{
+		Column: clause.Column{Table: clause.CurrentTable, Name: pk.DBName},
+	})
 }

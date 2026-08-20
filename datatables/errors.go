@@ -2,27 +2,39 @@ package datatables
 
 import "errors"
 
-// Common errors returned by the datatables package
+// Common errors returned by the datatables package. All are reachable
+// through errors.Is, including indirectly via *ValidationError.Unwrap.
 var (
 	// ErrInvalidColumnName is returned when a column name contains invalid characters
 	ErrInvalidColumnName = errors.New("invalid column name: must contain only alphanumeric characters, underscores, and dots")
 
-	// ErrColumnNotFound is returned when a requested orderable column is not found
-	ErrColumnNotFound = errors.New("column not found in orderable map")
+	// ErrInvalidData is returned when the destination passed to OfReturn is
+	// not a pointer to a slice of structs.
+	ErrInvalidData = errors.New("invalid data: expected a pointer to a slice of structs")
 
-	// ErrInvalidData is returned when the provided data is not a valid slice
-	ErrInvalidData = errors.New("invalid data: expected a slice")
+	// ErrInvalidOrderColumn is returned by OfReturn when Options.StrictOrder is
+	// true and the request's order key is not present in the orderable map.
+	ErrInvalidOrderColumn = errors.New("order column not found in orderable map")
 
-	// ErrDefaultOrderColumn is returned when default ordering references a non-existent column
-	ErrDefaultOrderColumn = errors.New("default order column does not exist in the database")
+	// ErrInvalidOrderDirection is returned when an order direction is not
+	// "asc" or "desc".
+	ErrInvalidOrderDirection = errors.New("order direction must be \"asc\" or \"desc\"")
 )
 
-// ValidationError represents a validation error with additional context
+// ValidationError represents a validation error with additional context.
+// It wraps one of the sentinel errors above, so callers can use
+// errors.Is(err, datatables.ErrInvalidColumnName) instead of parsing the
+// message string.
 type ValidationError struct {
 	Field   string
 	Message string
+	Err     error
 }
 
 func (e *ValidationError) Error() string {
 	return "validation error on field '" + e.Field + "': " + e.Message
+}
+
+func (e *ValidationError) Unwrap() error {
+	return e.Err
 }

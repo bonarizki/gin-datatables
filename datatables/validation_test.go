@@ -1,7 +1,10 @@
 package datatables
 
 import (
+	"errors"
 	"testing"
+
+	"github.com/bonarizki-dat/Datatables-Gin/v2/datatables/dto"
 )
 
 func TestIsValidColumnName(t *testing.T) {
@@ -114,5 +117,61 @@ func TestValidateOrderableColumns(t *testing.T) {
 				t.Errorf("validateOrderableColumns() error = %v, shouldErr %v", err, tt.shouldErr)
 			}
 		})
+	}
+}
+
+func TestValidateDefaultOrders(t *testing.T) {
+	tests := []struct {
+		name      string
+		orders    []dto.Order
+		shouldErr bool
+		wantErr   error
+	}{
+		{
+			name:      "Valid single order",
+			orders:    []dto.Order{{Column: "created_at", Dir: "desc"}},
+			shouldErr: false,
+		},
+		{
+			name:      "Valid multi-column order",
+			orders:    []dto.Order{{Column: "status", Dir: "asc"}, {Column: "created_at", Dir: "desc"}},
+			shouldErr: false,
+		},
+		{
+			name:      "Nil orders",
+			orders:    nil,
+			shouldErr: false,
+		},
+		{
+			name:      "Invalid column",
+			orders:    []dto.Order{{Column: "id; DROP TABLE users", Dir: "asc"}},
+			shouldErr: true,
+			wantErr:   ErrInvalidColumnName,
+		},
+		{
+			name:      "Invalid direction",
+			orders:    []dto.Order{{Column: "created_at", Dir: "up"}},
+			shouldErr: true,
+			wantErr:   ErrInvalidOrderDirection,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateDefaultOrders(tt.orders)
+			if (err != nil) != tt.shouldErr {
+				t.Errorf("validateDefaultOrders() error = %v, shouldErr %v", err, tt.shouldErr)
+			}
+			if tt.wantErr != nil && !errors.Is(err, tt.wantErr) {
+				t.Errorf("validateDefaultOrders() error = %v, want errors.Is match for %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidationErrorUnwrap(t *testing.T) {
+	err := validateSearchableColumns([]string{"bad; name"})
+	if !errors.Is(err, ErrInvalidColumnName) {
+		t.Errorf("expected errors.Is(err, ErrInvalidColumnName) to be true, got err=%v", err)
 	}
 }
