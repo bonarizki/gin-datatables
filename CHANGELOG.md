@@ -28,6 +28,10 @@ protocol are intentionally not implemented.
 - `parser_test.go`/`processor_test.go` coverage for both additions. Package
   coverage: 92.8% → 93.5%.
 
+### 🔧 Changed
+
+- Minimum Go version raised from 1.23 to 1.26.
+
 ### 📖 Documented (not implemented, by design)
 
 - `search[regex]` / `columns[i][search][regex]` — regex search is not

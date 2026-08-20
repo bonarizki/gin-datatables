@@ -1,6 +1,6 @@
 # 🧮 Datatables-Gin
 
-[![Go Version](https://img.shields.io/badge/Go-1.23+-00ADD8?style=flat&logo=go)](https://go.dev/)
+[![Go Version](https://img.shields.io/badge/Go-1.26+-00ADD8?style=flat&logo=go)](https://go.dev/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Tests](https://img.shields.io/badge/tests-passing-brightgreen.svg)](datatables/)
 
@@ -35,7 +35,7 @@ go get github.com/bonarizki-dat/Datatables-Gin/v2
 ```
 
 **Requirements:**
-- Go 1.23 or higher
+- Go 1.26 or higher
 - Gin Web Framework
 - GORM v2
 
