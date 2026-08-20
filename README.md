@@ -23,7 +23,7 @@ Inspired by [Yajra DataTables](https://github.com/yajra/laravel-datatables) (Lar
 - ⚙️ **Highly Customizable**: Add, edit, or remove columns dynamically
 - 📊 **Gin + GORM**: Works seamlessly with Gin framework and GORM ORM
 - 💡 **Type-Safe**: Generic implementation (`OfReturn[T any]`) for compile-time safety
-- 🧪 **Tested**: 92.8% coverage as of v2.0.0, including SQL-level tests for the search and ordering logic
+- 🧪 **Tested**: 93.5% coverage as of v2.1.0, including SQL-level tests for the search and ordering logic
 - 📦 **Column validation**: Searchable/orderable/default-order columns are checked against an identifier whitelist before reaching SQL
 
 ---
@@ -201,6 +201,26 @@ opts := datatables.NewOptions().
     WithIndex("row_number", true)
 ```
 
+### Per-Column Search
+
+When a DataTables column has its own search box (`columns.searchable: true`
+with individual column filtering enabled on the frontend), the client sends
+`columns[i][data]` and `columns[i][search][value]` for every column. No code
+changes are required to support this — `OfReturn` reads it automatically and
+resolves each frontend key through the same `orderable` map already passed
+in, so a column must be in `orderable` to be filterable this way:
+
+```go
+// Request: columns[0][data]=name&columns[0][search][value]=john
+// With orderable: map[string]string{"name": "name", "email": "email"}
+// generates an additional AND-ed condition:
+// WHERE ... AND LOWER(name) LIKE LOWER(?) ESCAPE '\'
+```
+
+Per-column search values combine with global search and any `WHERE` the
+caller already applied — all as independent `AND` conditions, so they
+narrow the result set further rather than replacing each other.
+
 ### Complete Example
 
 ```go
@@ -323,6 +343,22 @@ in which case `Options.DefaultPageSize` (10 by default) is used. A client
 cannot force an unbounded result set with `length=0` or `length=-1` unless
 the server has explicitly opted in via `WithUnlimitedPageSize(true)`.
 
+### Not supported by design
+
+A few parameters from the DataTables protocol are intentionally not read,
+rather than being gaps:
+
+- **`search[regex]` / `columns[i][search][regex]`** — treating the search
+  value as a regular expression is not implemented. Regex-to-SQL
+  translation is not portable across database engines (MySQL `REGEXP`,
+  Postgres `~`, SQLite has no native equivalent), and an untrusted regex is
+  a known denial-of-service vector (catastrophic backtracking).
+- **`columns[i][searchable]` / `columns[i][orderable]`** — these are
+  client-sent hints and are never read. Trusting them would let a client
+  widen its own search/order surface; the `searchable`/`orderable`
+  arguments passed to `OfReturn` remain the only source of truth for what
+  is allowed.
+
 ---
 
 ## 📚 API Reference
@@ -349,7 +385,8 @@ func OfReturn[T any](
 - `query` - GORM query builder (can include WHERE, JOIN, etc.)
 - `dest` - Pointer to slice where results will be stored
 - `searchable` - Columns that support global search
-- `orderable` - Map of frontend column names to database columns
+- `orderable` - Map of frontend column names to database columns; also used
+  to resolve per-column search (`columns[i][search][value]`) keys
 - `opts` - Configuration options
 
 **Returns:**
@@ -472,7 +509,7 @@ Run the test suite:
 go test ./datatables/... -v
 ```
 
-Run with coverage (92.8% as of v2.0.0):
+Run with coverage (93.5% as of v2.1.0):
 
 ```bash
 go test ./datatables/... -cover

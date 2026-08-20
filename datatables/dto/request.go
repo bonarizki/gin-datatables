@@ -13,13 +13,22 @@ type Order struct {
 	Dir    string
 }
 
+// ColumnSearch represents a single columns[i][search][value] entry from a
+// DataTables request. Column is the frontend key (columns[i][data]), which
+// is resolved against the same orderable map used for sorting.
+type ColumnSearch struct {
+	Column string
+	Value  string
+}
+
 // Params holds the normalized DataTables request parameters. Length and Start
 // are always bounded (see Options.DefaultPageSize/MaxPageSize/UnlimitedPageSize),
 // so callers never need to guard against unbounded pagination themselves.
 type Params struct {
-	Draw   int64
-	Start  int
-	Length int
-	Search string
-	Orders []Order
+	Draw           int64
+	Start          int
+	Length         int
+	Search         string
+	Orders         []Order
+	ColumnSearches []ColumnSearch
 }

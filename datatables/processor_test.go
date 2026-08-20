@@ -124,6 +124,101 @@ func TestApplySearch_SingleColumn(t *testing.T) {
 	}
 }
 
+// TestApplyColumnSearch_KnownColumnAddsAndedLikeClause verifies that a
+// columns[i][search][value] entry resolved through the orderable map
+// produces an AND-ed, escaped LIKE condition — not grouped with OR, since
+// each per-column filter is independent.
+func TestApplyColumnSearch_KnownColumnAddsAndedLikeClause(t *testing.T) {
+	db := dryRunDB(t)
+	var out []testUser
+
+	orderable := map[string]string{"name": "name"}
+	searches := []dto.ColumnSearch{{Column: "name", Value: "100%_x"}}
+
+	q := applyColumnSearch(db.Model(&testUser{}).Session(&gorm.Session{}), orderable, searches)
+	stmt := q.Find(&out).Statement
+	sql := stmt.SQL.String()
+
+	if !strings.Contains(sql, "LOWER(name) LIKE LOWER(?)") {
+		t.Fatalf("expected a LOWER(...) LIKE LOWER(?) clause, got SQL: %s", sql)
+	}
+	if regexpUngroupedOr(sql) {
+		t.Errorf("column search must not introduce an ungrouped OR: %s", sql)
+	}
+
+	if len(stmt.Vars) == 0 {
+		t.Fatalf("expected bound vars, got none")
+	}
+	pattern, ok := stmt.Vars[len(stmt.Vars)-1].(string)
+	if !ok {
+		t.Fatalf("expected string var, got %T", stmt.Vars[len(stmt.Vars)-1])
+	}
+	if pattern != `%100\%\_x%` {
+		t.Errorf("expected escaped LIKE pattern, got %q", pattern)
+	}
+}
+
+// TestApplyColumnSearch_UnknownColumnIsSkipped verifies that a search
+// value for a frontend key not present in the orderable map is ignored
+// rather than trusted, since the orderable map is the authority on which
+// columns are exposed.
+func TestApplyColumnSearch_UnknownColumnIsSkipped(t *testing.T) {
+	db := dryRunDB(t)
+	var out []testUser
+
+	searches := []dto.ColumnSearch{{Column: "secret_field", Value: "x"}}
+
+	q := applyColumnSearch(db.Model(&testUser{}).Session(&gorm.Session{}), map[string]string{"name": "name"}, searches)
+	sql := q.Find(&out).Statement.SQL.String()
+
+	if strings.Contains(sql, "LIKE") {
+		t.Errorf("expected no LIKE clause for an unresolved column, got SQL: %s", sql)
+	}
+}
+
+// TestApplyColumnSearch_MultipleColumnsAreAllAnded verifies that several
+// per-column search values are all applied as independent AND conditions.
+func TestApplyColumnSearch_MultipleColumnsAreAllAnded(t *testing.T) {
+	db := dryRunDB(t)
+	var out []testUser
+
+	orderable := map[string]string{"name": "name", "code": "code"}
+	searches := []dto.ColumnSearch{
+		{Column: "name", Value: "john"},
+		{Column: "code", Value: "abc"},
+	}
+
+	q := applyColumnSearch(db.Model(&testUser{}).Session(&gorm.Session{}), orderable, searches)
+	sql := q.Find(&out).Statement.SQL.String()
+
+	if !strings.Contains(sql, "LOWER(name) LIKE LOWER(?)") || !strings.Contains(sql, "LOWER(code) LIKE LOWER(?)") {
+		t.Fatalf("expected both column search clauses, got SQL: %s", sql)
+	}
+	if regexpUngroupedOr(sql) {
+		t.Errorf("multiple column searches must stay AND-ed, not OR-ed: %s", sql)
+	}
+}
+
+// TestApplyColumnSearch_DoesNotLeakAcrossCallerFilter mirrors the global
+// search regression test: a caller-supplied WHERE clause must survive
+// alongside a per-column search condition, and the two must combine with
+// AND rather than reintroducing the ungrouped-OR data leak.
+func TestApplyColumnSearch_DoesNotLeakAcrossCallerFilter(t *testing.T) {
+	db := dryRunDB(t)
+	var out []testUser
+
+	base := db.Model(&testUser{}).Where("tenant_id = ?", "A")
+	q := applyColumnSearch(base.Session(&gorm.Session{}), map[string]string{"name": "name"}, []dto.ColumnSearch{{Column: "name", Value: "x"}})
+	sql := q.Find(&out).Statement.SQL.String()
+
+	if !strings.Contains(sql, "tenant_id = ?") {
+		t.Fatalf("expected caller's WHERE clause to survive, got SQL: %s", sql)
+	}
+	if regexpUngroupedOr(sql) {
+		t.Fatalf("column search combined with a caller filter must not produce an ungrouped OR: %s", sql)
+	}
+}
+
 func TestApplyOrdering_RequestedColumnResolvedAndTieBroken(t *testing.T) {
 	db := dryRunDB(t)
 	var out []testUser
@@ -231,6 +326,30 @@ func TestOfReturn_EndToEnd(t *testing.T) {
 	result, err := OfReturn(
 		c,
 		db.Model(&testUser{}).Where("tenant_id = ?", "A"),
+		&out,
+		[]string{"name", "code"},
+		map[string]string{"name": "name", "code": "code"},
+		NewOptions(),
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Draw != 1 {
+		t.Errorf("expected default draw=1, got %d", result.Draw)
+	}
+}
+
+// TestOfReturn_ColumnSearchEndToEnd exercises columns[i][data]/
+// columns[i][search][value] through the full OfReturn pipeline.
+func TestOfReturn_ColumnSearchEndToEnd(t *testing.T) {
+	db := dryRunDB(t)
+	var out []testUser
+
+	c := testGinContext("columns[0][data]=name&columns[0][search][value]=john&length=5&start=0")
+
+	result, err := OfReturn(
+		c,
+		db.Model(&testUser{}),
 		&out,
 		[]string{"name", "code"},
 		map[string]string{"name": "name", "code": "code"},

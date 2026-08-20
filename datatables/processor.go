@@ -19,6 +19,9 @@ import (
 //   - Validates all column names to prevent SQL injection, including Options.DefaultOrders
 //   - Groups global-search OR conditions so they cannot escape the caller's own WHERE clauses
 //   - Escapes LIKE wildcards in the search value
+//   - Resolves per-column search (columns[i][search][value]) through the
+//     same orderable map used for sorting, so a client cannot filter on a
+//     column the caller did not explicitly expose
 //   - Enforces a bounded page size (Options.DefaultPageSize/MaxPageSize)
 //   - Propagates the request context, so a cancelled request stops its query
 //
@@ -79,6 +82,9 @@ func OfReturn[T any](
 	if params.Search != "" && len(searchable) > 0 {
 		filteredQuery = applySearch(filteredQuery, searchable, params.Search)
 	}
+	if len(params.ColumnSearches) > 0 {
+		filteredQuery = applyColumnSearch(filteredQuery, orderable, params.ColumnSearches)
+	}
 
 	var filtered int64
 	if err := filteredQuery.Count(&filtered).Error; err != nil {
@@ -137,6 +143,29 @@ func applySearch(query *gorm.DB, searchable []string, searchValue string) *gorm.
 // is matched literally instead of being interpreted as a pattern.
 func escapeLike(s string) string {
 	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
+}
+
+// applyColumnSearch adds one AND-ed LIKE condition per requested
+// columns[i][search][value], narrowing the result set beyond the global
+// search. Each entry's frontend key is resolved through the same orderable
+// map used for sorting; a key not present there is not filterable this way
+// and is skipped, since the orderable map — not a client-side hint such as
+// columns[i][searchable] — is the authority on which columns are exposed.
+// Unlike applySearch, no OR grouping is needed here: every condition is
+// independently AND-ed onto the query.
+func applyColumnSearch(query *gorm.DB, orderable map[string]string, columnSearches []dto.ColumnSearch) *gorm.DB {
+	for _, cs := range columnSearches {
+		col, ok := orderable[cs.Column]
+		if !ok {
+			log.Printf("datatables: column search key %q not found in orderable map, skipping", cs.Column)
+			continue
+		}
+
+		pattern := "%" + escapeLike(cs.Value) + "%"
+		query = query.Where("LOWER("+col+") LIKE LOWER(?) ESCAPE '\\'", pattern)
+	}
+
+	return query
 }
 
 // applyOrdering adds ORDER BY clauses to the query, then appends a primary

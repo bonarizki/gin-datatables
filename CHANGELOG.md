@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.1.0] - 2026-08-21
+
+Additive, non-breaking release. Closes two remaining gaps against the
+official DataTables server-side protocol and documents which parts of the
+protocol are intentionally not implemented.
+
+### ✅ Added
+
+- **Per-column search**: `columns[i][search][value]` is now read and
+  applied as an `AND`-ed, escaped `LIKE` condition per column, on top of
+  global search and any caller-supplied `WHERE`. The frontend key is
+  resolved through the existing `orderable` map passed to `OfReturn` — no
+  new parameter or `Options` field, so no caller code changes are needed to
+  adopt it.
+- **`order[i][name]` support**: when the client sends a column's configured
+  name (via `columns.name`), it now takes priority over resolving
+  `order[i][column]` as a numeric index or a shorthand key.
+- `dto.ColumnSearch` and `dto.Params.ColumnSearches`.
+- `parser_test.go`/`processor_test.go` coverage for both additions. Package
+  coverage: 92.8% → 93.5%.
+
+### 📖 Documented (not implemented, by design)
+
+- `search[regex]` / `columns[i][search][regex]` — regex search is not
+  supported. SQL regex syntax is not portable across database engines, and
+  an untrusted regex is a denial-of-service vector (catastrophic
+  backtracking).
+- `columns[i][searchable]` / `columns[i][orderable]` — these client-sent
+  flags are never read. The `searchable`/`orderable` arguments passed to
+  `OfReturn` remain the sole authority on what a client may search or sort
+  by; trusting client-side hints for that decision would let a client
+  widen its own access.
+
+---
+
 ## [2.0.0] - 2026-08-21
 
 Fixes a cross-tenant data leak in global search, restores spec-compliant
@@ -194,7 +229,7 @@ See `examples/basic_usage.go` for complete examples.
 ## What's Next?
 
 Potential future enhancements (feedback welcome):
-- [ ] Support for individual column search
+- [x] Support for individual column search — shipped in v2.1.0
 - [ ] Advanced filtering options
 - [ ] Export functionality (CSV, Excel)
 - [ ] Caching layer for frequent queries
