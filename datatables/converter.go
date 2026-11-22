@@ -143,5 +143,9 @@ func getFieldName(field reflect.StructField) string {
 	// Extract field name (before comma, if present)
 	// e.g., "field_name,omitempty" -> "field_name"
 	parts := strings.Split(jsonTag, ",")
-	return parts[0]
+	name := strings.TrimSpace(parts[0])
+	if name == "" {
+		return field.Name
+	}
+	return name
 }
