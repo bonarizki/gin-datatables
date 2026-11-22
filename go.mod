@@ -42,3 +42,5 @@ require (
 	golang.org/x/tools v0.34.0 // indirect
 	google.golang.org/protobuf v1.36.9 // indirect
 )
+
+retract v2.1.0 // wrong module path; use v2.1.1+
