@@ -237,6 +237,12 @@ func applyOrdering[T any](query *gorm.DB, params dto.Params, orderable map[strin
 // .Model(&T{}) call) or, failing that, from dest.
 func withTieBreaker[T any](query *gorm.DB, dest *[]T) *gorm.DB {
 	stmt := query.Statement
+	if _, hasGroup := stmt.Clauses["GROUP BY"]; hasGroup {
+		return query
+	}
+	if stmt.Distinct {
+		return query
+	}
 
 	model := stmt.Model
 	if model == nil {
