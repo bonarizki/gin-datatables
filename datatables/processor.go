@@ -77,7 +77,7 @@ func OfReturn[T any](
 
 	var total int64
 	if err := query.Session(&gorm.Session{}).Count(&total).Error; err != nil {
-		return dto.Datatables{}, err
+		return dto.Datatables{}, fmt.Errorf("datatables: count total: %w", err)
 	}
 
 	filteredQuery := query.Session(&gorm.Session{})
@@ -89,8 +89,10 @@ func OfReturn[T any](
 	}
 
 	var filtered int64
-	if err := filteredQuery.Count(&filtered).Error; err != nil {
-		return dto.Datatables{}, err
+	if params.Search == "" && len(params.ColumnSearches) == 0 {
+		filtered = total
+	} else if err := filteredQuery.Count(&filtered).Error; err != nil {
+		return dto.Datatables{}, fmt.Errorf("datatables: count filtered: %w", err)
 	}
 
 	filteredQuery, err := applyOrdering(filteredQuery, params, orderable, opts, dest)
@@ -109,7 +111,7 @@ func OfReturn[T any](
 	}
 
 	if err := filteredQuery.Find(dest).Error; err != nil {
-		return dto.Datatables{}, err
+		return dto.Datatables{}, fmt.Errorf("datatables: find: %w", err)
 	}
 
 	rows, err := structToMapSlice(dest)
@@ -134,7 +136,7 @@ func applySearch(query *gorm.DB, searchable []string, searchValue string) *gorm.
 
 	group := query.Session(&gorm.Session{NewDB: true})
 	for i, col := range searchable {
-		cond := "LOWER(" + col + ") LIKE LOWER(?) ESCAPE '!'"
+		cond := likeCondition(query, col)
 		if i == 0 {
 			group = group.Where(cond, pattern)
 		} else {
@@ -143,6 +145,23 @@ func applySearch(query *gorm.DB, searchable []string, searchValue string) *gorm.
 	}
 
 	return query.Where(group)
+}
+
+// likeCondition returns a dialect-appropriate LIKE expression for column col.
+func likeCondition(query *gorm.DB, col string) string {
+	if query == nil || query.Dialector == nil {
+		return "LOWER(" + col + ") LIKE LOWER(?) ESCAPE '!'"
+	}
+	switch query.Dialector.Name() {
+	case "postgres":
+		return "CAST(" + col + " AS TEXT) ILIKE ? ESCAPE '!'"
+	case "mysql":
+		return "CAST(" + col + " AS CHAR) LIKE ? ESCAPE '!'"
+	case "sqlite":
+		return "LOWER(CAST(" + col + " AS TEXT)) LIKE LOWER(?) ESCAPE '!'"
+	default:
+		return "LOWER(" + col + ") LIKE LOWER(?) ESCAPE '!'"
+	}
 }
 
 // escapeLike neutralizes LIKE wildcards so a search for "100%" or "a_b"
@@ -168,7 +187,7 @@ func applyColumnSearch(query *gorm.DB, orderable map[string]string, columnSearch
 		}
 
 		pattern := "%" + escapeLike(cs.Value) + "%"
-		query = query.Where("LOWER("+col+") LIKE LOWER(?) ESCAPE '!'", pattern)
+		query = query.Where(likeCondition(query, col), pattern)
 	}
 
 	return query
