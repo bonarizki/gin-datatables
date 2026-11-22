@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [2.2.0] - Unreleased
+## [2.2.0] - 2026-11-23
 
 Additive release. No existing call needs to change.
 
@@ -37,9 +37,9 @@ Additive release. No existing call needs to change.
 
 ---
 
-## [2.1.1] - Unreleased
+## [2.1.1] - 2026-11-23
 
-Urgent fixes. Tag from the commit before the 2.2.0 additions.
+Urgent fixes, tagged on the commit before the 2.2.0 additions.
 
 > ⚠️ **Review your structs before upgrading.** Fields tagged
 > `json:",omitempty"` (empty name) used to be dropped from the output by
