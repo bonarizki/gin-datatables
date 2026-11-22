@@ -56,7 +56,6 @@ func structToMapSlice(data interface{}) ([]map[string]interface{}, error) {
 		// Dereference pointer if necessary
 		if item.Kind() == reflect.Ptr {
 			if item.IsNil() {
-				result = append(result, map[string]interface{}{})
 				continue
 			}
 			item = item.Elem()

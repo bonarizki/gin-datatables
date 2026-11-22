@@ -2,6 +2,7 @@ package datatables
 
 import (
 	"regexp"
+	"strings"
 
 	"github.com/bonarizki/gin-datatables/v2/datatables/dto"
 )
@@ -71,7 +72,29 @@ func validateOrderableColumns(columns map[string]string) error {
 // isValidOrderDirection reports whether dir is "asc" or "desc"
 // (case-insensitive).
 func isValidOrderDirection(dir string) bool {
-	return dir == "asc" || dir == "desc" || dir == "ASC" || dir == "DESC"
+	return strings.EqualFold(dir, "asc") || strings.EqualFold(dir, "desc")
+}
+
+// validateOptionColumns validates the column names carried by Options
+// itself: TieBreaker (unless empty or "-") and every ColumnSearch entry.
+func validateOptionColumns(opts Options) error {
+	if opts.TieBreaker != "" && opts.TieBreaker != "-" && !isValidColumnName(opts.TieBreaker) {
+		return &ValidationError{
+			Field:   opts.TieBreaker,
+			Message: "tie-breaker column contains invalid characters",
+			Err:     ErrInvalidColumnName,
+		}
+	}
+	for key, val := range opts.ColumnSearch {
+		if !isValidColumnName(key) || !isValidColumnName(val) {
+			return &ValidationError{
+				Field:   key,
+				Message: "column search mapping contains invalid characters",
+				Err:     ErrInvalidColumnName,
+			}
+		}
+	}
+	return nil
 }
 
 // validateDefaultOrders validates every Options.DefaultOrders entry so that

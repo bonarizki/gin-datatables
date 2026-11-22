@@ -284,7 +284,7 @@ func TestParseColumnSearches_MaxColumnsCap(t *testing.T) {
 	}
 	c.Request = httptest.NewRequest("GET", "/?"+query, nil)
 
-	got := parseColumnSearches(c)
+	got := parseColumnSearches(c, 0)
 	if len(got) != maxColumns {
 		t.Errorf("len(ColumnSearches) = %d, want %d (maxColumns cap)", len(got), maxColumns)
 	}

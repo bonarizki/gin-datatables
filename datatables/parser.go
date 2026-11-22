@@ -3,6 +3,7 @@ package datatables
 import (
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/bonarizki/gin-datatables/v2/datatables/dto"
 	"github.com/gin-gonic/gin"
@@ -62,7 +63,7 @@ func ParseParams(c *gin.Context, opts Options) dto.Params {
 
 	length := parseLength(c, opts)
 
-	search := defaultParam(c, "search[value]", "")
+	search := truncateRunes(defaultParam(c, "search[value]", ""), opts.MaxSearchLength)
 
 	return dto.Params{
 		Draw:           draw,
@@ -70,7 +71,7 @@ func ParseParams(c *gin.Context, opts Options) dto.Params {
 		Length:         length,
 		Search:         search,
 		Orders:         parseOrders(c),
-		ColumnSearches: parseColumnSearches(c),
+		ColumnSearches: parseColumnSearches(c, opts.MaxSearchLength),
 	}
 }
 
@@ -165,7 +166,7 @@ func resolveOrderColumn(c *gin.Context, raw string, name string) string {
 // reached). A column with no search value is skipped, not treated as the
 // end of the list, since DataTables sends an entry for every column
 // regardless of whether the user typed anything into it.
-func parseColumnSearches(c *gin.Context) []dto.ColumnSearch {
+func parseColumnSearches(c *gin.Context, maxLen int) []dto.ColumnSearch {
 	var searches []dto.ColumnSearch
 
 	for i := 0; i < maxColumns; i++ {
@@ -176,7 +177,7 @@ func parseColumnSearches(c *gin.Context) []dto.ColumnSearch {
 			break
 		}
 
-		value := defaultParam(c, prefix+"[search][value]", "")
+		value := truncateRunes(defaultParam(c, prefix+"[search][value]", ""), maxLen)
 		if col == "" || value == "" {
 			continue
 		}
@@ -199,4 +200,13 @@ func defaultParam(c *gin.Context, key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// truncateRunes cuts s to at most n runes, so a client cannot force a
+// database to scan with an arbitrarily long LIKE pattern.
+func truncateRunes(s string, n int) string {
+	if n <= 0 || utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	return string([]rune(s)[:n])
 }

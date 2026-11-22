@@ -3,13 +3,16 @@ package datatables
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
+	"slices"
 	"strings"
+	"sync"
 
 	"github.com/bonarizki/gin-datatables/v2/datatables/dto"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+	"gorm.io/gorm/schema"
 )
 
 // OfReturn executes the core DataTables server-side logic.
@@ -19,9 +22,10 @@ import (
 //   - Validates all column names to prevent SQL injection, including Options.DefaultOrders
 //   - Groups global-search OR conditions so they cannot escape the caller's own WHERE clauses
 //   - Escapes LIKE wildcards in the search value
-//   - Resolves per-column search (columns[i][search][value]) through the
-//     same orderable map used for sorting, so a client cannot filter on a
-//     column the caller did not explicitly expose
+//   - Resolves per-column search (columns[i][search][value]) through
+//     Options.ColumnSearch (or, if unset, the orderable map), so a client
+//     cannot filter on a column the caller did not explicitly expose
+//   - Caps search values at Options.MaxSearchLength runes
 //   - Enforces a bounded page size (Options.DefaultPageSize/MaxPageSize)
 //   - Propagates the request context, so a cancelled request stops its query
 //
@@ -64,6 +68,9 @@ func OfReturn[T any](
 	if err := validateDefaultOrders(opts.DefaultOrders); err != nil {
 		return dto.Datatables{}, err
 	}
+	if err := validateOptionColumns(opts); err != nil {
+		return dto.Datatables{}, err
+	}
 
 	opts = opts.normalized()
 
@@ -85,7 +92,7 @@ func OfReturn[T any](
 		filteredQuery = applySearch(filteredQuery, searchable, params.Search)
 	}
 	if len(params.ColumnSearches) > 0 {
-		filteredQuery = applyColumnSearch(filteredQuery, orderable, params.ColumnSearches)
+		filteredQuery = applyColumnSearch(filteredQuery, columnSearchMap(opts, orderable), params.ColumnSearches, opts.logger())
 	}
 
 	var filtered int64
@@ -170,19 +177,29 @@ func escapeLike(s string) string {
 	return strings.NewReplacer("!", "!!", "%", "!%", "_", "!_").Replace(s)
 }
 
+// columnSearchMap returns the map that authorizes per-column search:
+// opts.ColumnSearch when set, otherwise the orderable map (deprecated
+// fallback, kept for v2 compatibility).
+func columnSearchMap(opts Options, orderable map[string]string) map[string]string {
+	if opts.ColumnSearch != nil {
+		return opts.ColumnSearch
+	}
+	return orderable
+}
+
 // applyColumnSearch adds one AND-ed LIKE condition per requested
 // columns[i][search][value], narrowing the result set beyond the global
-// search. Each entry's frontend key is resolved through the same orderable
-// map used for sorting; a key not present there is not filterable this way
-// and is skipped, since the orderable map — not a client-side hint such as
-// columns[i][searchable] — is the authority on which columns are exposed.
-// Unlike applySearch, no OR grouping is needed here: every condition is
-// independently AND-ed onto the query.
-func applyColumnSearch(query *gorm.DB, orderable map[string]string, columnSearches []dto.ColumnSearch) *gorm.DB {
+// search. Each entry's frontend key is resolved through allowed (see
+// columnSearchMap); a key not present there is skipped, since the server's
+// map — not a client-side hint such as columns[i][searchable] — is the
+// authority on which columns are exposed. Unlike applySearch, no OR
+// grouping is needed here: every condition is independently AND-ed onto
+// the query.
+func applyColumnSearch(query *gorm.DB, allowed map[string]string, columnSearches []dto.ColumnSearch, logger *slog.Logger) *gorm.DB {
 	for _, cs := range columnSearches {
-		col, ok := orderable[cs.Column]
+		col, ok := allowed[cs.Column]
 		if !ok {
-			log.Printf("datatables: column search key %q not found in orderable map, skipping", cs.Column)
+			logger.Debug("datatables: column search key not allowed, skipping", "key", cs.Column)
 			continue
 		}
 
@@ -204,7 +221,7 @@ func applyColumnSearch(query *gorm.DB, orderable map[string]string, columnSearch
 // tie-breaker, rather than silently returning rows in an undefined order
 // under LIMIT/OFFSET.
 func applyOrdering[T any](query *gorm.DB, params dto.Params, orderable map[string]string, opts Options, dest *[]T) (*gorm.DB, error) {
-	applied := false
+	var ordered []string
 
 	for _, o := range params.Orders {
 		col, ok := orderable[o.Column]
@@ -212,30 +229,41 @@ func applyOrdering[T any](query *gorm.DB, params dto.Params, orderable map[strin
 			if opts.StrictOrder {
 				return nil, fmt.Errorf("%w: %q", ErrInvalidOrderColumn, o.Column)
 			}
-			log.Printf("datatables: order column %q not found in orderable map, skipping", o.Column)
+			opts.logger().Debug("datatables: order column not in orderable map, skipping", "key", o.Column)
 			continue
 		}
 		query = query.Order(col + " " + o.Dir)
-		applied = true
+		ordered = append(ordered, col)
 	}
 
-	if !applied {
+	if len(ordered) == 0 {
 		for _, d := range opts.DefaultOrders {
 			query = query.Order(d.Column + " " + d.Dir)
+			ordered = append(ordered, d.Column)
 		}
 	}
 
-	return withTieBreaker(query, dest), nil
+	return withTieBreaker(query, dest, opts.TieBreaker, ordered), nil
 }
 
-// withTieBreaker appends the primary key so LIMIT/OFFSET paging stays stable
-// when the sorted column contains duplicate values.
+// schemaCache backs schema.Parse for tie-breaker lookups, so resolving the
+// primary key never mutates the caller's GORM statement.
+var schemaCache sync.Map
+
+// withTieBreaker appends a stable final ORDER BY column so LIMIT/OFFSET
+// paging stays stable when the sorted column contains duplicate values.
+// tieBreaker is Options.TieBreaker: "-" disables it, a column name is used
+// as-is, and "" resolves the model's primary key. Nothing is appended for
+// GROUP BY or DISTINCT queries, where an extra column changes the result,
+// or when the column is already part of ordered.
 //
-// Reading query.Statement.Schema before the query executes is a no-op: GORM
-// only populates it inside Execute. To get a usable schema here, the model
-// is parsed explicitly from Statement.Model (set by the caller's own
+// Statement.Schema is only populated when GORM executes, so the model is
+// parsed separately from Statement.Model (set by the caller's own
 // .Model(&T{}) call) or, failing that, from dest.
-func withTieBreaker[T any](query *gorm.DB, dest *[]T) *gorm.DB {
+func withTieBreaker[T any](query *gorm.DB, dest *[]T, tieBreaker string, ordered []string) *gorm.DB {
+	if tieBreaker == "-" {
+		return query
+	}
 	stmt := query.Statement
 	if _, hasGroup := stmt.Clauses["GROUP BY"]; hasGroup {
 		return query
@@ -244,21 +272,27 @@ func withTieBreaker[T any](query *gorm.DB, dest *[]T) *gorm.DB {
 		return query
 	}
 
+	if tieBreaker != "" {
+		if slices.Contains(ordered, tieBreaker) {
+			return query
+		}
+		return query.Order(tieBreaker)
+	}
+
 	model := stmt.Model
 	if model == nil {
 		model = dest
 	}
-
-	if err := stmt.Parse(model); err != nil || stmt.Schema == nil {
+	sch, err := schema.Parse(model, &schemaCache, query.NamingStrategy)
+	if err != nil || sch == nil || sch.PrioritizedPrimaryField == nil {
 		return query
 	}
-
-	pk := stmt.Schema.PrioritizedPrimaryField
-	if pk == nil {
+	pk := sch.PrioritizedPrimaryField.DBName
+	if slices.Contains(ordered, pk) || slices.Contains(ordered, sch.Table+"."+pk) {
 		return query
 	}
 
 	return query.Order(clause.OrderByColumn{
-		Column: clause.Column{Table: clause.CurrentTable, Name: pk.DBName},
+		Column: clause.Column{Table: clause.CurrentTable, Name: pk},
 	})
 }
