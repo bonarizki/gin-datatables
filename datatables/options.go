@@ -1,6 +1,14 @@
 package datatables
 
-import "github.com/bonarizki/gin-datatables/v2/datatables/dto"
+import (
+	"context"
+	"log/slog"
+	"maps"
+	"slices"
+	"strings"
+
+	"github.com/bonarizki/gin-datatables/v2/datatables/dto"
+)
 
 // Options provides customization similar to Yajra DataTables.
 // It allows adding, editing, and removing columns dynamically,
@@ -45,7 +53,69 @@ type Options struct {
 
 	// RemoveColumns is a list of columns to be removed from the final output
 	RemoveColumns []string
+
+	// TieBreaker controls the column appended to ORDER BY so LIMIT/OFFSET
+	// paging stays stable when sorted values repeat. Empty (default) uses
+	// the model's primary key; "-" disables it; any other value is a
+	// column name validated like orderable columns.
+	TieBreaker string
+
+	// ColumnSearch maps frontend keys accepted in
+	// columns[i][search][value] to database columns. nil (default) falls
+	// back to the orderable map, which is deprecated because it exposes
+	// every sortable column to filtering; an empty non-nil map disables
+	// per-column search.
+	ColumnSearch map[string]string
+
+	// Logger receives debug records about ignored order/search keys. nil
+	// (default) discards them; the package never writes to the standard
+	// library's global logger.
+	Logger *slog.Logger
+
+	// MaxSearchLength caps, in runes, the global and per-column search
+	// values read from the request. Defaults to 256.
+	MaxSearchLength int
 }
+
+// normalized fills in default pagination bounds when DefaultPageSize or
+// MaxPageSize are zero or inconsistent, so a zero-value Options cannot
+// disable LIMIT and return every row.
+func (o Options) normalized() Options {
+	def := o.DefaultPageSize
+	max := o.MaxPageSize
+	if def <= 0 {
+		def = 10
+	}
+	if max <= 0 {
+		max = 500
+	}
+	if def > max {
+		def = max
+	}
+	o.DefaultPageSize = def
+	o.MaxPageSize = max
+	if o.MaxSearchLength <= 0 {
+		o.MaxSearchLength = 256
+	}
+	return o
+}
+
+// logger returns o.Logger, or a logger that discards everything.
+func (o Options) logger() *slog.Logger {
+	if o.Logger != nil {
+		return o.Logger
+	}
+	return discardLogger
+}
+
+var discardLogger = slog.New(discardHandler{})
+
+type discardHandler struct{}
+
+func (discardHandler) Enabled(context.Context, slog.Level) bool  { return false }
+func (discardHandler) Handle(context.Context, slog.Record) error { return nil }
+func (d discardHandler) WithAttrs([]slog.Attr) slog.Handler      { return d }
+func (d discardHandler) WithGroup(string) slog.Handler           { return d }
 
 // NewOptions returns a new Options instance with sensible defaults.
 // By default, it creates an index column named "DT_RowIndex" without resetting
@@ -93,7 +163,42 @@ func (o Options) WithIndex(col string, reset bool) Options {
 //
 //	opts.WithDefaultOrder("created_at", "desc")
 func (o Options) WithDefaultOrder(col string, dir string) Options {
-	o.DefaultOrders = append(o.DefaultOrders, dto.Order{Column: col, Dir: dir})
+	o.DefaultOrders = append(slices.Clip(o.DefaultOrders), dto.Order{Column: col, Dir: strings.ToLower(dir)})
+	return o
+}
+
+// WithTieBreaker sets Options.TieBreaker: "" for the primary key
+// (default), "-" to disable, or a column name such as "users.id".
+func (o Options) WithTieBreaker(col string) Options {
+	o.TieBreaker = col
+	return o
+}
+
+// WithColumnSearch sets which frontend keys may be filtered through
+// columns[i][search][value], mapped to database columns. Pass an empty map
+// to disable per-column search entirely.
+//
+// Example:
+//
+//	opts.WithColumnSearch(map[string]string{"status": "users.status"})
+func (o Options) WithColumnSearch(cols map[string]string) Options {
+	m := maps.Clone(cols)
+	if m == nil && cols != nil {
+		m = map[string]string{}
+	}
+	o.ColumnSearch = m
+	return o
+}
+
+// WithLogger routes debug records about ignored order/search keys to l.
+func (o Options) WithLogger(l *slog.Logger) Options {
+	o.Logger = l
+	return o
+}
+
+// WithMaxSearchLength caps, in runes, how much of each search value is used.
+func (o Options) WithMaxSearchLength(n int) Options {
+	o.MaxSearchLength = n
 	return o
 }
 
@@ -141,7 +246,12 @@ func (o Options) WithUnlimitedPageSize(allow bool) Options {
 //	    return row["first_name"].(string) + " " + row["last_name"].(string)
 //	})
 func (o Options) Add(col string, fn func(row map[string]interface{}) interface{}) Options {
-	o.AddColumns[col] = fn
+	m := maps.Clone(o.AddColumns)
+	if m == nil {
+		m = make(map[string]func(row map[string]interface{}) interface{})
+	}
+	m[col] = fn
+	o.AddColumns = m
 	return o
 }
 
@@ -158,7 +268,12 @@ func (o Options) Add(col string, fn func(row map[string]interface{}) interface{}
 //	    return strings.ToLower(value.(string))
 //	})
 func (o Options) Edit(col string, fn func(value interface{}, row map[string]interface{}) interface{}) Options {
-	o.EditColumns[col] = fn
+	m := maps.Clone(o.EditColumns)
+	if m == nil {
+		m = make(map[string]func(value interface{}, row map[string]interface{}) interface{})
+	}
+	m[col] = fn
+	o.EditColumns = m
 	return o
 }
 
@@ -172,6 +287,6 @@ func (o Options) Edit(col string, fn func(value interface{}, row map[string]inte
 //
 //	opts.Remove("password", "internal_id", "deleted_at")
 func (o Options) Remove(cols ...string) Options {
-	o.RemoveColumns = append(o.RemoveColumns, cols...)
+	o.RemoveColumns = append(slices.Clip(o.RemoveColumns), cols...)
 	return o
 }

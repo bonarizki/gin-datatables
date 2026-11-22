@@ -130,17 +130,17 @@ func TestStructToMapSlice(t *testing.T) {
 		}
 	})
 
-	t.Run("Nil pointer element does not panic", func(t *testing.T) {
+	t.Run("Nil pointer element is skipped", func(t *testing.T) {
 		users := []*TestUser{nil, {ID: 1, Name: "John"}}
 		result, err := structToMapSlice(&users)
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		if len(result) != 2 {
-			t.Fatalf("Expected 2 results, got %d", len(result))
+		if len(result) != 1 {
+			t.Fatalf("Expected 1 result, got %d", len(result))
 		}
-		if result[1]["id"] != 1 {
-			t.Errorf("Expected id=1, got %v", result[1]["id"])
+		if result[0]["id"] != 1 {
+			t.Errorf("Expected id=1, got %v", result[0]["id"])
 		}
 	})
 

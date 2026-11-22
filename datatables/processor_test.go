@@ -107,7 +107,7 @@ func TestApplySearch_EscapesLikeWildcards(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected string var, got %T", stmt.Vars[0])
 	}
-	if pattern != `%100\%\_x\\y%` {
+	if pattern != `%100!%!_x\y%` {
 		t.Errorf("expected escaped LIKE pattern, got %q", pattern)
 	}
 }
@@ -135,7 +135,7 @@ func TestApplyColumnSearch_KnownColumnAddsAndedLikeClause(t *testing.T) {
 	orderable := map[string]string{"name": "name"}
 	searches := []dto.ColumnSearch{{Column: "name", Value: "100%_x"}}
 
-	q := applyColumnSearch(db.Model(&testUser{}).Session(&gorm.Session{}), orderable, searches)
+	q := applyColumnSearch(db.Model(&testUser{}).Session(&gorm.Session{}), orderable, searches, discardLogger)
 	stmt := q.Find(&out).Statement
 	sql := stmt.SQL.String()
 
@@ -153,7 +153,7 @@ func TestApplyColumnSearch_KnownColumnAddsAndedLikeClause(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected string var, got %T", stmt.Vars[len(stmt.Vars)-1])
 	}
-	if pattern != `%100\%\_x%` {
+	if pattern != `%100!%!_x%` {
 		t.Errorf("expected escaped LIKE pattern, got %q", pattern)
 	}
 }
@@ -168,7 +168,7 @@ func TestApplyColumnSearch_UnknownColumnIsSkipped(t *testing.T) {
 
 	searches := []dto.ColumnSearch{{Column: "secret_field", Value: "x"}}
 
-	q := applyColumnSearch(db.Model(&testUser{}).Session(&gorm.Session{}), map[string]string{"name": "name"}, searches)
+	q := applyColumnSearch(db.Model(&testUser{}).Session(&gorm.Session{}), map[string]string{"name": "name"}, searches, discardLogger)
 	sql := q.Find(&out).Statement.SQL.String()
 
 	if strings.Contains(sql, "LIKE") {
@@ -188,7 +188,7 @@ func TestApplyColumnSearch_MultipleColumnsAreAllAnded(t *testing.T) {
 		{Column: "code", Value: "abc"},
 	}
 
-	q := applyColumnSearch(db.Model(&testUser{}).Session(&gorm.Session{}), orderable, searches)
+	q := applyColumnSearch(db.Model(&testUser{}).Session(&gorm.Session{}), orderable, searches, discardLogger)
 	sql := q.Find(&out).Statement.SQL.String()
 
 	if !strings.Contains(sql, "LOWER(name) LIKE LOWER(?)") || !strings.Contains(sql, "LOWER(code) LIKE LOWER(?)") {
@@ -208,7 +208,7 @@ func TestApplyColumnSearch_DoesNotLeakAcrossCallerFilter(t *testing.T) {
 	var out []testUser
 
 	base := db.Model(&testUser{}).Where("tenant_id = ?", "A")
-	q := applyColumnSearch(base.Session(&gorm.Session{}), map[string]string{"name": "name"}, []dto.ColumnSearch{{Column: "name", Value: "x"}})
+	q := applyColumnSearch(base.Session(&gorm.Session{}), map[string]string{"name": "name"}, []dto.ColumnSearch{{Column: "name", Value: "x"}}, discardLogger)
 	sql := q.Find(&out).Statement.SQL.String()
 
 	if !strings.Contains(sql, "tenant_id = ?") {

@@ -3,6 +3,7 @@ package datatables
 import (
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/bonarizki/gin-datatables/v2/datatables/dto"
 	"github.com/gin-gonic/gin"
@@ -49,19 +50,20 @@ const maxColumns = 100
 // opts.UnlimitedPageSize is true and the client explicitly requested -1;
 // callers never need to special-case "no limit" themselves.
 func ParseParams(c *gin.Context, opts Options) dto.Params {
-	draw, err := strconv.ParseInt(c.DefaultQuery("draw", "1"), 10, 64)
+	opts = opts.normalized()
+	draw, err := strconv.ParseInt(defaultParam(c, "draw", "1"), 10, 64)
 	if err != nil {
 		draw = 1
 	}
 
-	start, err := strconv.Atoi(c.DefaultQuery("start", "0"))
+	start, err := strconv.Atoi(defaultParam(c, "start", "0"))
 	if err != nil || start < 0 {
 		start = 0
 	}
 
 	length := parseLength(c, opts)
 
-	search := c.DefaultQuery("search[value]", "")
+	search := truncateRunes(defaultParam(c, "search[value]", ""), opts.MaxSearchLength)
 
 	return dto.Params{
 		Draw:           draw,
@@ -69,14 +71,14 @@ func ParseParams(c *gin.Context, opts Options) dto.Params {
 		Length:         length,
 		Search:         search,
 		Orders:         parseOrders(c),
-		ColumnSearches: parseColumnSearches(c),
+		ColumnSearches: parseColumnSearches(c, opts.MaxSearchLength),
 	}
 }
 
 // parseLength resolves the page size, always returning either a positive
 // row count or -1 when the caller has explicitly opted into unlimited pages.
 func parseLength(c *gin.Context, opts Options) int {
-	raw, exists := c.GetQuery("length")
+	raw, exists := param(c, "length")
 	if !exists {
 		return opts.DefaultPageSize
 	}
@@ -112,18 +114,18 @@ func parseOrders(c *gin.Context) []dto.Order {
 	for i := 0; i < maxOrderClauses; i++ {
 		prefix := "order[" + strconv.Itoa(i) + "]"
 
-		rawColumn, exists := c.GetQuery(prefix + "[column]")
+		rawColumn, exists := param(c, prefix+"[column]")
 		if !exists {
 			break
 		}
 
-		name := c.Query(prefix + "[name]")
+		name, _ := param(c, prefix+"[name]")
 		col := resolveOrderColumn(c, rawColumn, name)
 		if col == "" {
 			continue
 		}
 
-		dir := strings.ToLower(c.DefaultQuery(prefix+"[dir]", "asc"))
+		dir := strings.ToLower(defaultParam(c, prefix+"[dir]", "asc"))
 		if dir != "asc" && dir != "desc" {
 			dir = "asc"
 		}
@@ -151,7 +153,7 @@ func resolveOrderColumn(c *gin.Context, raw string, name string) string {
 	}
 
 	if _, err := strconv.Atoi(raw); err == nil {
-		if colName := c.Query("columns[" + raw + "][data]"); colName != "" {
+		if colName, _ := param(c, "columns["+raw+"][data]"); colName != "" {
 			return colName
 		}
 	}
@@ -164,18 +166,18 @@ func resolveOrderColumn(c *gin.Context, raw string, name string) string {
 // reached). A column with no search value is skipped, not treated as the
 // end of the list, since DataTables sends an entry for every column
 // regardless of whether the user typed anything into it.
-func parseColumnSearches(c *gin.Context) []dto.ColumnSearch {
+func parseColumnSearches(c *gin.Context, maxLen int) []dto.ColumnSearch {
 	var searches []dto.ColumnSearch
 
 	for i := 0; i < maxColumns; i++ {
 		prefix := "columns[" + strconv.Itoa(i) + "]"
 
-		col, exists := c.GetQuery(prefix + "[data]")
+		col, exists := param(c, prefix+"[data]")
 		if !exists {
 			break
 		}
 
-		value := c.DefaultQuery(prefix+"[search][value]", "")
+		value := truncateRunes(defaultParam(c, prefix+"[search][value]", ""), maxLen)
 		if col == "" || value == "" {
 			continue
 		}
@@ -184,4 +186,27 @@ func parseColumnSearches(c *gin.Context) []dto.ColumnSearch {
 	}
 
 	return searches
+}
+
+func param(c *gin.Context, key string) (string, bool) {
+	if v, ok := c.GetQuery(key); ok {
+		return v, true
+	}
+	return c.GetPostForm(key)
+}
+
+func defaultParam(c *gin.Context, key, fallback string) string {
+	if v, ok := param(c, key); ok {
+		return v
+	}
+	return fallback
+}
+
+// truncateRunes cuts s to at most n runes, so a client cannot force a
+// database to scan with an arbitrarily long LIKE pattern.
+func truncateRunes(s string, n int) string {
+	if n <= 0 || utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	return string([]rune(s)[:n])
 }
