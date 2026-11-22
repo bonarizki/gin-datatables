@@ -21,14 +21,15 @@
 //	    &users,
 //	    []string{"name", "email"},
 //	    map[string]string{
-//	        "name": "name",
-//	        "email": "email",
-//	        "created": "created_at",
+//	        "name":       "name",
+//	        "email":      "email",
+//	        "created_at": "created_at",
 //	    },
-//	    datatables.NewOptions().WithDefaultOrder("created_at DESC"),
+//	    datatables.NewOptions().WithDefaultOrder("created_at", "desc"),
 //	)
 //	if err != nil {
-//	    c.JSON(500, gin.H{"error": err.Error()})
+//	    log.Printf("datatables: %v", err)
+//	    datatables.JSONError(c, http.StatusInternalServerError, "failed to load data")
 //	    return
 //	}
 //	datatables.JSON(c, result)
@@ -37,19 +38,21 @@
 //
 //	opts := datatables.NewOptions().
 //	    WithIndex("row_num", true).
-//	    WithDefaultOrder("id DESC").
-//	    Add("full_name", func(row map[string]interface{}) interface{} {
-//	        return fmt.Sprintf("%s %s", row["first_name"], row["last_name"])
+//	    WithDefaultOrder("id", "desc").
+//	    Add("label", func(row map[string]any) any {
+//	        return fmt.Sprintf("%v <%v>", row["name"], row["email"])
 //	    }).
-//	    Edit("email", func(value interface{}, row map[string]interface{}) interface{} {
-//	        return strings.ToLower(value.(string))
+//	    Edit("email", func(value any, row map[string]any) any {
+//	        return strings.ToLower(fmt.Sprint(value))
 //	    }).
 //	    Remove("password", "internal_id")
 //
 // Security:
 //   - All column names are validated against a whitelist pattern
 //   - Search queries use parameterized statements
-//   - Maximum page size is enforced (500 records)
+//   - Page size is capped by Options.MaxPageSize (default 500); a missing,
+//     zero, negative or unparseable length falls back to
+//     Options.DefaultPageSize (default 10)
 //
 // For more information, visit: https://github.com/bonarizki/gin-datatables
 //

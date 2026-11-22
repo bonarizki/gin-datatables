@@ -1,8 +1,8 @@
 # 🧮 gin-datatables
 
-[![Go Version](https://img.shields.io/badge/Go-1.26+-00ADD8?style=flat&logo=go)](https://go.dev/)
+[![Go Version](https://img.shields.io/badge/Go-1.23+-00ADD8?style=flat&logo=go)](https://go.dev/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-passing-brightgreen.svg)](datatables/)
+[![CI](https://github.com/bonarizki/gin-datatables/actions/workflows/ci.yml/badge.svg)](https://github.com/bonarizki/gin-datatables/actions/workflows/ci.yml)
 
 A **DataTables-style server-side processor** for **Gin + GORM** in Go
 (`github.com/bonarizki/gin-datatables/v2`).
@@ -24,7 +24,7 @@ Inspired by [Yajra DataTables](https://github.com/yajra/laravel-datatables) (Lar
 - ⚙️ **Highly Customizable**: Add, edit, or remove columns dynamically
 - 📊 **Gin + GORM**: Works seamlessly with Gin framework and GORM ORM
 - 💡 **Type-Safe**: Generic implementation (`OfReturn[T any]`) for compile-time safety
-- 🧪 **Tested**: 93.5% coverage as of v2.1.0, including SQL-level tests for the search and ordering logic
+- 🧪 **Tested**: SQL-level DryRun tests plus an in-memory SQLite integration suite
 - 📦 **Column validation**: Searchable/orderable/default-order columns are checked against an identifier whitelist before reaching SQL
 
 ---
@@ -36,7 +36,7 @@ go get github.com/bonarizki/gin-datatables/v2
 ```
 
 **Requirements:**
-- Go 1.26 or higher
+- Go 1.23 or higher
 - Gin Web Framework
 - GORM v2
 
@@ -74,9 +74,9 @@ func GetUsers(c *gin.Context, db *gorm.DB) {
 
     // Map frontend column names to database columns
     orderable := map[string]string{
-        "name":    "name",
-        "email":   "email",
-        "created": "created_at",
+        "name":       "name",
+        "email":      "email",
+        "created_at": "created_at",
     }
 
     // Configure options
@@ -118,7 +118,7 @@ config works with no `ajax.dataSrc` override:
             <th data-data="DT_RowIndex">No</th>
             <th data-data="name">Name</th>
             <th data-data="email">Email</th>
-            <th data-data="created">Created</th>
+            <th data-data="created_at">Created</th>
         </tr>
     </thead>
 </table>
@@ -132,11 +132,16 @@ $('#users-table').DataTable({
         { data: 'DT_RowIndex', orderable: false, searchable: false },
         { data: 'name' },
         { data: 'email' },
-        { data: 'created', name: 'created' }
+        { data: 'created_at' }
     ]
 });
 </script>
 ```
+
+Keep three names identical for every sortable column: the JSON key your
+struct produces (`created_at`), the frontend `columns[i].data`, and the
+key in the `orderable` map. The map's value is the database column, which
+may differ (for example `"created_at": "users.created_at"`).
 
 ---
 
@@ -148,13 +153,12 @@ Add computed columns dynamically:
 
 ```go
 opts := datatables.NewOptions().
-    Add("full_name", func(row map[string]interface{}) interface{} {
-        return fmt.Sprintf("%s %s",
-            row["first_name"],
-            row["last_name"])
+    // Assumes a struct with `json:"name"`, `json:"email"` and `json:"status"` fields.
+    Add("label", func(row map[string]interface{}) interface{} {
+        return fmt.Sprintf("%v <%v>", row["name"], row["email"])
     }).
     Add("status_badge", func(row map[string]interface{}) interface{} {
-        status := row["status"].(string)
+        status, _ := row["status"].(string)
         if status == "active" {
             return `<span class="badge badge-success">Active</span>`
         }
@@ -170,11 +174,14 @@ Edit column values before sending to frontend:
 opts := datatables.NewOptions().
     Edit("email", func(value interface{}, row map[string]interface{}) interface{} {
         // Lowercase all emails
-        return strings.ToLower(value.(string))
+        return strings.ToLower(fmt.Sprint(value))
     }).
     Edit("created_at", func(value interface{}, row map[string]interface{}) interface{} {
         // Format timestamps
-        t := value.(time.Time)
+        t, ok := value.(time.Time)
+        if !ok {
+            return value
+        }
         return t.Format("2006-01-02 15:04:05")
     })
 ```
@@ -206,17 +213,22 @@ opts := datatables.NewOptions().
 
 When a DataTables column has its own search box (`columns.searchable: true`
 with individual column filtering enabled on the frontend), the client sends
-`columns[i][data]` and `columns[i][search][value]` for every column. No code
-changes are required to support this — `OfReturn` reads it automatically and
-resolves each frontend key through the same `orderable` map already passed
-in, so a column must be in `orderable` to be filterable this way:
+`columns[i][data]` and `columns[i][search][value]` for every column.
+`OfReturn` reads it automatically. Declare which keys may be filtered with
+`WithColumnSearch`; pass an empty map to turn per-column search off:
 
 ```go
+opts := datatables.NewOptions().
+    WithColumnSearch(map[string]string{"name": "users.name"})
+
 // Request: columns[0][data]=name&columns[0][search][value]=john
-// With orderable: map[string]string{"name": "name", "email": "email"}
-// generates an additional AND-ed condition:
-// WHERE ... AND LOWER(name) LIKE LOWER(?) ESCAPE '\'
+// generates an additional AND-ed condition (Postgres shown):
+// WHERE ... AND CAST(users.name AS TEXT) ILIKE ? ESCAPE '!'
 ```
+
+If `WithColumnSearch` is not set, keys are resolved through the `orderable`
+map instead. That fallback is deprecated, because it makes every sortable
+column filterable, and will become opt-in in v3.
 
 Per-column search values combine with global search and any `WHERE` the
 caller already applied — all as independent `AND` conditions, so they
@@ -235,18 +247,18 @@ func GetProducts(c *gin.Context, db *gorm.DB) {
         "price":    "price",
         "stock":    "stock",
         "category": "category",
-        "created":  "created_at",
+        "created_at": "created_at",
     }
 
     opts := datatables.NewOptions().
         WithIndex("row_num", true).
         WithDefaultOrder("created_at", "desc").
         Add("price_formatted", func(row map[string]interface{}) interface{} {
-            price := row["price"].(float64)
+            price, _ := row["price"].(float64)
             return fmt.Sprintf("$%.2f", price)
         }).
         Add("stock_status", func(row map[string]interface{}) interface{} {
-            stock := row["stock"].(int)
+            stock, _ := row["stock"].(int)
             if stock > 10 {
                 return "In Stock"
             } else if stock > 0 {
@@ -255,7 +267,7 @@ func GetProducts(c *gin.Context, db *gorm.DB) {
             return "Out of Stock"
         }).
         Edit("category", func(value interface{}, row map[string]interface{}) interface{} {
-            return strings.ToUpper(value.(string))
+            return strings.ToUpper(fmt.Sprint(value))
         }).
         Remove("internal_notes", "cost_price")
 
@@ -325,24 +337,45 @@ if err != nil {
 ### Search isolation and safe LIKE patterns
 
 Global search is grouped into its own parenthesized clause, so it cannot
-escape a `WHERE` the caller already applied (e.g. tenant scoping), and `%`,
-`_`, and `\` are escaped in the search value before it reaches the query:
+escape a `WHERE` the caller already applied (e.g. tenant scoping). `%`, `_`
+and `!` in the search value are escaped with `!` (`ESCAPE '!'`), which works
+in MySQL's default `sql_mode` where a backslash escape would not:
 
 ```go
 // db.Model(&User{}).Where("tenant_id = ?", tenantID)
 // search value: "x"
-// generates:
-// WHERE tenant_id = ? AND (LOWER(name) LIKE LOWER(?) ESCAPE '\' OR LOWER(code) LIKE LOWER(?) ESCAPE '\')
+// generates (SQLite shown; Postgres uses ILIKE, MySQL CAST(... AS CHAR) LIKE):
+// WHERE tenant_id = ? AND (LOWER(CAST(name AS TEXT)) LIKE LOWER(?) ESCAPE '!'
+//                       OR LOWER(CAST(code AS TEXT)) LIKE LOWER(?) ESCAPE '!')
 // vars: [tenantID, "%x%", "%x%"]
 ```
 
+Columns are cast to text first, so searching a numeric or timestamp column
+does not fail on Postgres. Search values are cut to
+`Options.MaxSearchLength` runes (256 by default).
+
 ### Bounded pagination
 
-`length` is always clamped between 1 and `Options.MaxPageSize` (500 by
-default) unless the request omits it or sends a value that can't be parsed,
-in which case `Options.DefaultPageSize` (10 by default) is used. A client
-cannot force an unbounded result set with `length=0` or `length=-1` unless
-the server has explicitly opted in via `WithUnlimitedPageSize(true)`.
+A requested `length` above `Options.MaxPageSize` (500 by default) is cut to
+that maximum. A missing, zero, negative or unparseable `length` uses
+`Options.DefaultPageSize` (10 by default). Zero or inconsistent values in
+`Options` itself also fall back to those defaults, so a zero-value `Options`
+never disables `LIMIT`. Only `WithUnlimitedPageSize(true)` lets a client
+request `length=-1` for every row.
+
+### Stable paging and GROUP BY
+
+After the requested (or default) order, `OfReturn` appends the model's
+primary key so rows with equal sort values do not move between pages. It
+is skipped for `GROUP BY` and `DISTINCT` queries and when the key is already
+ordered. Use `WithTieBreaker("users.id")` to choose another column, or
+`WithTieBreaker("-")` to turn it off.
+
+### Joins and aliases
+
+`searchable`, `orderable` values and `WithColumnSearch` values are used in
+`WHERE` and `ORDER BY`, so they must be real column expressions such as
+`users.name`, not aliases defined in your `SELECT`.
 
 ### Not supported by design
 
@@ -387,7 +420,7 @@ func OfReturn[T any](
 - `dest` - Pointer to slice where results will be stored
 - `searchable` - Columns that support global search
 - `orderable` - Map of frontend column names to database columns; also used
-  to resolve per-column search (`columns[i][search][value]`) keys
+  to resolve per-column search keys when `WithColumnSearch` is not set
 - `opts` - Configuration options
 
 **Returns:**
@@ -419,7 +452,8 @@ datatables.JSONError(c, http.StatusInternalServerError, "failed to load users")
 
 Creates a new Options instance with defaults: `DefaultPageSize` 10,
 `MaxPageSize` 500, `UnlimitedPageSize` false, `StrictOrder` false, no
-`DefaultOrders`.
+`DefaultOrders`, primary-key tie-breaker, `MaxSearchLength` 256, and no
+logger.
 
 ```go
 opts := datatables.NewOptions()
@@ -447,7 +481,7 @@ opts.WithDefaultOrder("created_at", "desc")
 #### `WithStrictOrder(strict bool)`
 
 When `true`, `OfReturn` returns `ErrInvalidOrderColumn` if the request's
-order key is not in the orderable map, instead of logging a warning and
+order key is not in the orderable map, instead of skipping it and
 falling back to `DefaultOrders`. Recommended in development so
 frontend/backend wiring mistakes fail loudly.
 
@@ -472,13 +506,32 @@ Allows a client to request `length=-1` for "all rows", bypassing
 opts.WithUnlimitedPageSize(true)
 ```
 
+#### `WithTieBreaker(col string)`
+
+Column appended last to `ORDER BY`: `""` for the primary key (default),
+`"-"` to disable.
+
+#### `WithColumnSearch(cols map[string]string)`
+
+Frontend keys allowed in `columns[i][search][value]`, mapped to database
+columns. An empty map disables per-column search.
+
+#### `WithLogger(l *slog.Logger)`
+
+Receives debug records for ignored order and search keys. Nothing is
+logged by default.
+
+#### `WithMaxSearchLength(n int)`
+
+Maximum runes used from each search value (default 256).
+
 #### `Add(col string, fn func)`
 
 Adds a custom computed column.
 
 ```go
-opts.Add("full_name", func(row map[string]interface{}) interface{} {
-    return row["first_name"].(string) + " " + row["last_name"].(string)
+opts.Add("label", func(row map[string]interface{}) interface{} {
+    return fmt.Sprintf("%v <%v>", row["name"], row["email"])
 })
 ```
 
@@ -488,7 +541,7 @@ Transforms an existing column value.
 
 ```go
 opts.Edit("email", func(value interface{}, row map[string]interface{}) interface{} {
-    return strings.ToLower(value.(string))
+    return strings.ToLower(fmt.Sprint(value))
 })
 ```
 
@@ -510,7 +563,7 @@ Run the test suite:
 go test ./datatables/... -v
 ```
 
-Run with coverage (93.5% as of v2.1.0):
+Run with coverage:
 
 ```bash
 go test ./datatables/... -cover
@@ -518,7 +571,9 @@ go test ./datatables/... -cover
 
 `parser_test.go` and `processor_test.go` cover the request parsing,
 search-grouping, and ordering logic with `gorm.Config{DryRun: true}`,
-asserting on the generated SQL directly — no database required.
+asserting on the generated SQL directly. `integration_sqlite_test.go` runs
+`OfReturn` against an in-memory SQLite database (pure Go, no cgo), and
+`example_test.go` keeps the documented usage compiling.
 
 ---
 
@@ -535,8 +590,7 @@ datatables/
 ├── validation.go      # Security validation
 ├── errors.go          # Error types
 ├── response.go        # JSON response helpers
-├── parser_test.go     # ParseParams table-driven tests
-├── processor_test.go  # DryRun SQL assertions (search, ordering, OfReturn)
+├── *_test.go          # DryRun SQL, SQLite integration and example tests
 └── dto/
     ├── request.go     # Request DTOs
     └── response.go    # Response DTOs
