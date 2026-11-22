@@ -107,7 +107,7 @@ func TestApplySearch_EscapesLikeWildcards(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected string var, got %T", stmt.Vars[0])
 	}
-	if pattern != `%100\%\_x\\y%` {
+	if pattern != `%100!%!_x\y%` {
 		t.Errorf("expected escaped LIKE pattern, got %q", pattern)
 	}
 }
@@ -153,7 +153,7 @@ func TestApplyColumnSearch_KnownColumnAddsAndedLikeClause(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected string var, got %T", stmt.Vars[len(stmt.Vars)-1])
 	}
-	if pattern != `%100\%\_x%` {
+	if pattern != `%100!%!_x%` {
 		t.Errorf("expected escaped LIKE pattern, got %q", pattern)
 	}
 }

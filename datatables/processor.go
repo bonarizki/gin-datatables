@@ -65,6 +65,8 @@ func OfReturn[T any](
 		return dto.Datatables{}, err
 	}
 
+	opts = opts.normalized()
+
 	ctx := context.Background()
 	if c.Request != nil {
 		ctx = c.Request.Context()
@@ -96,10 +98,14 @@ func OfReturn[T any](
 		return dto.Datatables{}, err
 	}
 
-	if params.Length > 0 {
-		filteredQuery = filteredQuery.Offset(params.Start).Limit(params.Length)
-	} else {
+	if params.Length == -1 && opts.UnlimitedPageSize {
 		filteredQuery = filteredQuery.Offset(params.Start)
+	} else {
+		limit := params.Length
+		if limit <= 0 {
+			limit = opts.DefaultPageSize
+		}
+		filteredQuery = filteredQuery.Offset(params.Start).Limit(limit)
 	}
 
 	if err := filteredQuery.Find(dest).Error; err != nil {
@@ -128,7 +134,7 @@ func applySearch(query *gorm.DB, searchable []string, searchValue string) *gorm.
 
 	group := query.Session(&gorm.Session{NewDB: true})
 	for i, col := range searchable {
-		cond := "LOWER(" + col + ") LIKE LOWER(?) ESCAPE '\\'"
+		cond := "LOWER(" + col + ") LIKE LOWER(?) ESCAPE '!'"
 		if i == 0 {
 			group = group.Where(cond, pattern)
 		} else {
@@ -142,7 +148,7 @@ func applySearch(query *gorm.DB, searchable []string, searchValue string) *gorm.
 // escapeLike neutralizes LIKE wildcards so a search for "100%" or "a_b"
 // is matched literally instead of being interpreted as a pattern.
 func escapeLike(s string) string {
-	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
+	return strings.NewReplacer("!", "!!", "%", "!%", "_", "!_").Replace(s)
 }
 
 // applyColumnSearch adds one AND-ed LIKE condition per requested
@@ -162,7 +168,7 @@ func applyColumnSearch(query *gorm.DB, orderable map[string]string, columnSearch
 		}
 
 		pattern := "%" + escapeLike(cs.Value) + "%"
-		query = query.Where("LOWER("+col+") LIKE LOWER(?) ESCAPE '\\'", pattern)
+		query = query.Where("LOWER("+col+") LIKE LOWER(?) ESCAPE '!'", pattern)
 	}
 
 	return query
