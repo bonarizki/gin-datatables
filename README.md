@@ -1,10 +1,11 @@
-# 🧮 Datatables-Gin
+# 🧮 gin-datatables
 
 [![Go Version](https://img.shields.io/badge/Go-1.26+-00ADD8?style=flat&logo=go)](https://go.dev/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Tests](https://img.shields.io/badge/tests-passing-brightgreen.svg)](datatables/)
 
-A **DataTables-style server-side processor** for **Gin + GORM** in Go.
+A **DataTables-style server-side processor** for **Gin + GORM** in Go
+(`github.com/bonarizki/gin-datatables/v2`).
 Inspired by [Yajra DataTables](https://github.com/yajra/laravel-datatables) (Laravel), designed for clean, composable data handling in APIs.
 
 > **v2.0.0 is a breaking change from v1.x.** It fixes a cross-tenant data leak in

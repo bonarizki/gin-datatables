@@ -155,7 +155,7 @@ if errors.Is(err, datatables.ErrInvalidOrderColumn) {
 
 | Area | v1 | v2 |
 | --- | --- | --- |
-| Module path | `.../Datatables-Gin` | `.../Datatables-Gin/v2` |
+| Module path | `github.com/bonarizki-dat/Datatables-Gin` | `github.com/bonarizki/gin-datatables/v2` |
 | `ParseParams` | `ParseParams(c)` | `ParseParams(c, opts)` |
 | Order in `dto.Params` | `Order string`, `Dir string` | `Orders []dto.Order` |
 | `WithDefaultOrder` | `WithDefaultOrder("id DESC")` | `WithDefaultOrder("id", "desc")` |
