@@ -49,6 +49,7 @@ const maxColumns = 100
 // opts.UnlimitedPageSize is true and the client explicitly requested -1;
 // callers never need to special-case "no limit" themselves.
 func ParseParams(c *gin.Context, opts Options) dto.Params {
+	opts = opts.normalized()
 	draw, err := strconv.ParseInt(c.DefaultQuery("draw", "1"), 10, 64)
 	if err != nil {
 		draw = 1

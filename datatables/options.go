@@ -1,6 +1,11 @@
 package datatables
 
-import "github.com/bonarizki/gin-datatables/v2/datatables/dto"
+import (
+	"maps"
+	"slices"
+
+	"github.com/bonarizki/gin-datatables/v2/datatables/dto"
+)
 
 // Options provides customization similar to Yajra DataTables.
 // It allows adding, editing, and removing columns dynamically,
@@ -50,6 +55,26 @@ type Options struct {
 // NewOptions returns a new Options instance with sensible defaults.
 // By default, it creates an index column named "DT_RowIndex" without resetting
 // indices, a page size of 10 capped at 500, and no unlimited-page escape hatch.
+// normalized fills in default pagination bounds when DefaultPageSize or
+// MaxPageSize are zero or inconsistent, so a zero-value Options cannot
+// disable LIMIT and return every row.
+func (o Options) normalized() Options {
+	def := o.DefaultPageSize
+	max := o.MaxPageSize
+	if def <= 0 {
+		def = 10
+	}
+	if max <= 0 {
+		max = 500
+	}
+	if def > max {
+		def = max
+	}
+	o.DefaultPageSize = def
+	o.MaxPageSize = max
+	return o
+}
+
 func NewOptions() Options {
 	return Options{
 		IndexColumn:       "DT_RowIndex",
@@ -93,7 +118,7 @@ func (o Options) WithIndex(col string, reset bool) Options {
 //
 //	opts.WithDefaultOrder("created_at", "desc")
 func (o Options) WithDefaultOrder(col string, dir string) Options {
-	o.DefaultOrders = append(o.DefaultOrders, dto.Order{Column: col, Dir: dir})
+	o.DefaultOrders = append(slices.Clip(o.DefaultOrders), dto.Order{Column: col, Dir: dir})
 	return o
 }
 
@@ -141,7 +166,12 @@ func (o Options) WithUnlimitedPageSize(allow bool) Options {
 //	    return row["first_name"].(string) + " " + row["last_name"].(string)
 //	})
 func (o Options) Add(col string, fn func(row map[string]interface{}) interface{}) Options {
-	o.AddColumns[col] = fn
+	m := maps.Clone(o.AddColumns)
+	if m == nil {
+		m = make(map[string]func(row map[string]interface{}) interface{})
+	}
+	m[col] = fn
+	o.AddColumns = m
 	return o
 }
 
@@ -158,7 +188,12 @@ func (o Options) Add(col string, fn func(row map[string]interface{}) interface{}
 //	    return strings.ToLower(value.(string))
 //	})
 func (o Options) Edit(col string, fn func(value interface{}, row map[string]interface{}) interface{}) Options {
-	o.EditColumns[col] = fn
+	m := maps.Clone(o.EditColumns)
+	if m == nil {
+		m = make(map[string]func(value interface{}, row map[string]interface{}) interface{})
+	}
+	m[col] = fn
+	o.EditColumns = m
 	return o
 }
 
@@ -172,6 +207,6 @@ func (o Options) Edit(col string, fn func(value interface{}, row map[string]inte
 //
 //	opts.Remove("password", "internal_id", "deleted_at")
 func (o Options) Remove(cols ...string) Options {
-	o.RemoveColumns = append(o.RemoveColumns, cols...)
+	o.RemoveColumns = append(slices.Clip(o.RemoveColumns), cols...)
 	return o
 }
