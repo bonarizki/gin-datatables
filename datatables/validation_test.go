@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/bonarizki-dat/Datatables-Gin/v2/datatables/dto"
+	"github.com/bonarizki/gin-datatables/v2/datatables/dto"
 )
 
 func TestIsValidColumnName(t *testing.T) {

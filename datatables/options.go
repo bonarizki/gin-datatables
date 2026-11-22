@@ -1,6 +1,6 @@
 package datatables
 
-import "github.com/bonarizki-dat/Datatables-Gin/v2/datatables/dto"
+import "github.com/bonarizki/gin-datatables/v2/datatables/dto"
 
 // Options provides customization similar to Yajra DataTables.
 // It allows adding, editing, and removing columns dynamically,

@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/bonarizki-dat/Datatables-Gin/v2/datatables"
+	"github.com/bonarizki/gin-datatables/v2/datatables"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )

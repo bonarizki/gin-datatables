@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bonarizki-dat/Datatables-Gin/v2/datatables/dto"
+	"github.com/bonarizki/gin-datatables/v2/datatables/dto"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 	"gorm.io/gorm/utils/tests"

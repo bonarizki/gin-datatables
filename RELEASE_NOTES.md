@@ -35,7 +35,7 @@ response/converter output contract. It is a breaking change — see
 ## Is this backward compatible?
 
 **No.** This is a breaking release; the module path changes to
-`github.com/bonarizki-dat/Datatables-Gin/v2` and several APIs changed shape
+`github.com/bonarizki/gin-datatables/v2` and several APIs changed shape
 because the old shape *was* the bug. See [MIGRATING.md](MIGRATING.md) for a
 step-by-step guide — most call sites need a handful of mechanical changes
 (import path, `WithDefaultOrder` argument split, response body shape on the
@@ -58,7 +58,7 @@ datatables.JSON(c, result)
 
 ```go
 // v2
-import "github.com/bonarizki-dat/Datatables-Gin/v2/datatables"
+import "github.com/bonarizki/gin-datatables/v2/datatables"
 
 opts := datatables.NewOptions().WithDefaultOrder("created_at", "desc")
 result, err := datatables.OfReturn(c, db.Model(&User{}), &users, searchable, orderable, opts)
@@ -129,7 +129,7 @@ no tests at all, and where every fix in this release lives.
 ## Upgrading
 
 ```bash
-go get -u github.com/bonarizki-dat/Datatables-Gin/v2
+go get -u github.com/bonarizki/gin-datatables/v2
 ```
 
 Then update import paths and follow [MIGRATING.md](MIGRATING.md).

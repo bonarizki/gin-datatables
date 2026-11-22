@@ -19,12 +19,12 @@ Go requires the major version in the module path for v2+.
 
 ```diff
 -go get github.com/bonarizki-dat/Datatables-Gin
-+go get github.com/bonarizki-dat/Datatables-Gin/v2
++go get github.com/bonarizki/gin-datatables/v2
 ```
 
 ```diff
 -import "github.com/bonarizki-dat/Datatables-Gin/datatables"
-+import "github.com/bonarizki-dat/Datatables-Gin/v2/datatables"
++import "github.com/bonarizki/gin-datatables/v2/datatables"
 ```
 
 ## 2. Update `WithDefaultOrder` calls

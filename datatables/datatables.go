@@ -51,9 +51,9 @@
 //   - Search queries use parameterized statements
 //   - Maximum page size is enforced (500 records)
 //
-// For more information, visit: https://github.com/bonarizki-dat/Datatables-Gin
+// For more information, visit: https://github.com/bonarizki/gin-datatables
 //
 // Note: starting with v2, the module path includes the major version suffix:
 //
-//	import "github.com/bonarizki-dat/Datatables-Gin/v2/datatables"
+//	import "github.com/bonarizki/gin-datatables/v2/datatables"
 package datatables

@@ -1,4 +1,4 @@
-module github.com/bonarizki-dat/Datatables-Gin/v2
+module github.com/bonarizki/gin-datatables/v2
 
 go 1.26.0
 

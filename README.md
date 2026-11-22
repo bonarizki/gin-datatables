@@ -31,7 +31,7 @@ Inspired by [Yajra DataTables](https://github.com/yajra/laravel-datatables) (Lar
 ## 📦 Installation
 
 ```bash
-go get github.com/bonarizki-dat/Datatables-Gin/v2
+go get github.com/bonarizki/gin-datatables/v2
 ```
 
 **Requirements:**
@@ -53,7 +53,7 @@ import (
     "net/http"
     "time"
 
-    "github.com/bonarizki-dat/Datatables-Gin/v2/datatables"
+    "github.com/bonarizki/gin-datatables/v2/datatables"
     "github.com/gin-gonic/gin"
     "gorm.io/gorm"
 )
@@ -572,8 +572,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 If you encounter any issues or have questions:
 
-- 📝 [Open an issue](https://github.com/bonarizki-dat/Datatables-Gin/issues)
-- 💬 [Discussions](https://github.com/bonarizki-dat/Datatables-Gin/discussions)
+- 📝 [Open an issue](https://github.com/bonarizki/gin-datatables/issues)
+- 💬 [Discussions](https://github.com/bonarizki/gin-datatables/discussions)
 
 ---
 

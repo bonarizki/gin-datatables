@@ -110,7 +110,7 @@ contract. See [MIGRATING.md](MIGRATING.md) for the full upgrade guide.
 
 ### 🔧 Changed (breaking)
 
-- Module path is now `github.com/bonarizki-dat/Datatables-Gin/v2`.
+- Module path is now `github.com/bonarizki/gin-datatables/v2`.
 - `ParseParams(c *gin.Context)` → `ParseParams(c *gin.Context, opts Options)`,
   needed to read the page-size bounds.
 - `dto.Params.Order string` / `Dir string` → `dto.Params.Orders []dto.Order`.
@@ -246,4 +246,4 @@ Potential future enhancements (feedback welcome):
 - [README](README.md) - Full documentation
 - [MIGRATING.md](MIGRATING.md) - v1 → v2 migration guide
 - [Examples](examples/)
-- [Report Issues](https://github.com/bonarizki-dat/Datatables-Gin/issues)
+- [Report Issues](https://github.com/bonarizki/gin-datatables/issues)
