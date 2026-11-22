@@ -7,6 +7,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.2.0] - Unreleased
+
+Additive release. No existing call needs to change.
+
+### ✅ Added
+
+- `WithTieBreaker(col)`: choose the column appended last to `ORDER BY`
+  for stable paging, or `"-"` to disable it. The primary key is no longer
+  appended when it is already ordered, nor for `GROUP BY`/`DISTINCT`
+  queries, and resolving it no longer mutates the caller's statement.
+- `WithColumnSearch(map)`: explicit allow-list for
+  `columns[i][search][value]`. An empty map disables per-column search.
+  Without it, keys still resolve through `orderable`; that fallback is
+  deprecated and becomes opt-in in v3.
+- `WithLogger(*slog.Logger)`: skipped order/search keys are logged at
+  debug level to the injected logger. The package no longer writes to the
+  standard library's global logger.
+- `WithMaxSearchLength(n)` (default 256 runes) caps global and per-column
+  search values.
+- `ExampleOfReturn` and an in-memory SQLite integration suite.
+
+### 🔧 Changed
+
+- Order directions are validated case-insensitively, and
+  `WithDefaultOrder` stores them lowercase.
+- A nil pointer in the destination slice is skipped instead of producing
+  an empty row.
+
+---
+
+## [2.1.1] - Unreleased
+
+Urgent fixes. Tag from the commit before the 2.2.0 additions.
+
+> ⚠️ **Review your structs before upgrading.** Fields tagged
+> `json:",omitempty"` (empty name) used to be dropped from the output by
+> mistake. They now appear under their Go field name, like
+> `encoding/json`. If such a field is sensitive (for example
+> ``Password string `json:",omitempty"` ``), hide it with `Remove(...)`.
+
+> ⚠️ **A zero-value or misconfigured `Options` used to return every row.**
+> `Options{}` (or a zero `DefaultPageSize`/`MaxPageSize`) disabled
+> `LIMIT`. Defaults of 10 and 500 now apply, so callers that relied on the
+> unlimited behavior must opt in with `WithUnlimitedPageSize(true)` and
+> `length=-1`.
+
+### 🔴 Fixed
+
+- Search uses `ESCAPE '!'` instead of `ESCAPE '\'`, which was a syntax
+  error under MySQL's default `sql_mode`.
+- Search casts columns to text per dialect (Postgres `ILIKE`, MySQL
+  `CAST(... AS CHAR)`), so searching numeric or timestamp columns no longer
+  fails on Postgres.
+- `Add`, `Edit`, `Remove` and `WithDefaultOrder` no longer share maps or
+  slices with the `Options` they were called on, and work on a zero-value
+  `Options`.
+- DataTables parameters are read from POST form bodies as well as the
+  query string.
+- The primary-key tie-breaker is skipped for `GROUP BY` and `DISTINCT`
+  queries.
+
+### 🔧 Changed
+
+- Minimum Go version lowered from 1.26 to 1.23.
+- `retract v2.1.0`: that tag was published with the old module path. There
+  is no `v2.0.0` under `github.com/bonarizki/gin-datatables/v2`.
+- MIT `LICENSE` file added.
+
+---
+
 ## [2.1.0] - 2026-08-21
 
 Additive, non-breaking release. Closes two remaining gaps against the
@@ -130,7 +200,7 @@ contract. See [MIGRATING.md](MIGRATING.md) for the full upgrade guide.
 
 ---
 
-## [Unreleased] - 2025-11-10
+## [Unreleased] - 2025-11-10 (v1.x API, superseded — see MIGRATING.md)
 
 ### ✅ Added
 
